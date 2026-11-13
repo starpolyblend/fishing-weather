@@ -42,6 +42,39 @@ async function fetchForecast(env,nx,ny){
   }
   throw fail('아직 발표된 예보 자료가 없습니다. 잠시 후 다시 시도해 주세요.');
 }
+
+const waterStations=[
+ {id:'4007630',name:'보성군 가장교',unit:'m',datum:'수위표수위',column:1},
+ {id:'4007625',name:'보성강댐',unit:'EL.m',datum:'해발수위',column:3}
+];
+function parseWater(html,station,now=new Date()){
+ if(!html.includes(`value="${station.id}"`))throw new Error('station');
+ const table=[...html.matchAll(/<table\b[^>]*>([\s\S]*?)<\/table>/gi)].map(m=>m[1]).find(t=>t.includes('영산강홍수통제소지점별 수위자료'));
+ if(!table||!table.includes('수위표수위(m)')||!table.includes('해발수위(El.m)'))throw new Error('format');
+ const rows=[...table.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m=>[...m[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(x=>x[1].replace(/<[^>]+>/g,'').replace(/&nbsp;|&#160;/g,' ').trim())).filter(r=>r.length===4);
+ if(!rows.length)throw new Error('empty');
+ const r=rows[0],m=r[0].match(/^(\d{1,2})\.(\d{1,2})\.\s*(\d{2}):(\d{2})$/);
+ if(!m)throw new Error('time');
+ const year=new Date(now.getTime()+9*3600000).getUTCFullYear();
+ const dates=[year-1,year,year+1].map(y=>new Date(`${y}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}T${m[3]}:${m[4]}:00+09:00`)).filter(d=>Number.isFinite(+d)).sort((a,b)=>Math.abs(a-now)-Math.abs(b-now));
+ const observed=dates[0];if(!observed||observed-now>600000)throw new Error('future');
+ const raw=r[station.column],level=/^-?\d+(\.\d+)?$/.test(raw)?numberOrNull(raw):null;
+ return {level,observedAt:observed.toISOString()};
+}
+async function fetchWater(){
+ const stations=await Promise.all(waterStations.map(async station=>{
+  const sourceUrl=`https://www.yeongsanriver.go.kr/sumun/waterDetail.do?wlobscd=${station.id}`;
+  const base={id:station.id,name:station.name,unit:station.unit,datum:station.datum,sourceUrl};
+  try{
+   const res=await fetch(sourceUrl,{signal:AbortSignal.timeout(10000)});
+   if(!res.ok)throw new Error('upstream');
+   const parsed=parseWater(await res.text(),station);
+   return {...base,...parsed,...(parsed.level===null?{error:'해당 시각의 수위가 제공되지 않았습니다.'}:{})};
+  }catch{return {...base,level:null,observedAt:null,error:'공개 관측자료를 읽지 못했습니다. 공식 자료를 확인해 주세요.'};}
+ }));
+ return {source:'영산강홍수통제소 공개 수위자료',fetchedAt:new Date().toISOString(),stations};
+}
+
 export default {
   async fetch(request,env,ctx){
     const origin=request.headers.get('Origin')||'',allowed=(env.ALLOWED_ORIGINS||'').split(',').map(s=>s.trim()).filter(Boolean);
@@ -52,7 +85,16 @@ export default {
     if(request.method==='OPTIONS'){headers['Access-Control-Allow-Methods']='GET, OPTIONS';return new Response(null,{status:204,headers});}
     if(request.method!=='GET')return respond({message:'GET 요청만 지원합니다.'},405);
     const url=new URL(request.url);
-    if(url.pathname==='/api/health')return respond({ok:true,version:'0.1.0',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/health')return respond({ok:true,version:'0.2.0',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/water'){
+      try{
+        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/water-v1`);
+        const hit=cache?await cache.match(key):null;if(hit)return respond(await hit.json());
+        const data=await fetchWater();
+        if(cache&&ctx?.waitUntil&&data.stations.every(s=>s.level!==null))ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':'public, max-age=300'}})));
+        return respond(data);
+      }catch{return respond({message:'수위 자료를 가져오지 못했습니다.'},502);}
+    }
     if(url.pathname!=='/api/weather')return respond({message:'주소를 확인해 주세요.'},404);
     if(!env.KMA_SERVICE_KEY)return respond({message:'날씨 연결을 준비하고 있습니다.'},503);
     const nx=Number(url.searchParams.get('nx')),ny=Number(url.searchParams.get('ny'));
@@ -70,4 +112,4 @@ export default {
     }catch(e){return respond({message:e.status?e.message:'자료를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'},e.status||502);}
   }
 };
-export {issueTimes,forecasts,decodedKey};
+export {issueTimes,forecasts,decodedKey,parseWater,waterStations};
