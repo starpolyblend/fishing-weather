@@ -1,8 +1,9 @@
-import {windArrow,windSpeed} from './wind.js?v=0.5.1';
-import {waterChart,bindWaterCharts} from './water-chart.js?v=0.5.1';
-import {dayOffset,grid,kstDate} from './core.js?v=0.5.1';
-import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.5.1';
-import {weatherLabel} from './core.js?v=0.5.1';
+import {createTideView} from './tides.js?v=0.6.0';
+import {windArrow,windSpeed} from './wind.js?v=0.6.0';
+import {waterChart,bindWaterCharts} from './water-chart.js?v=0.6.0';
+import {dayOffset,grid,kstDate} from './core.js?v=0.6.0';
+import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.6.0';
+import {weatherLabel} from './core.js?v=0.6.0';
 const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),demo=new URLSearchParams(location.search).get('demo')==='1';
 const places=(cfg.locations||[]).slice(0,4),memory=new Map(),midMemory=new Map();let saved;
 try{saved=localStorage.getItem('fishing-place')}catch{}
@@ -22,7 +23,8 @@ $('#title').textContent=cfg.title;document.title=cfg.title;$('#today').textConte
 function renderPlaces(){$('#places').innerHTML=places.map(p=>`<button data-place="${esc(p.id)}" aria-pressed="${p.id===place?.id}">${esc(p.name)}</button>`).join('')}
 renderPlaces();
 $('#places').onclick=e=>{const b=e.target.closest('[data-place]');if(!b)return;place=places.find(p=>p.id===b.dataset.place);try{localStorage.setItem('fishing-place',place.id)}catch{}renderPlaces();load()};
-document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-tab]').forEach(x=>x.setAttribute('aria-pressed',x===b));$('#weather').hidden=b.dataset.tab!=='weather';$('#water').hidden=b.dataset.tab!=='water';if(b.dataset.tab==='weather')load();else loadWater()});
+let activeTab='weather';
+document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{activeTab=b.dataset.tab;document.querySelectorAll('[data-tab]').forEach(x=>x.setAttribute('aria-pressed',x===b));for(const id of ['weather','water','tide'])$('#'+id).hidden=id!==activeTab;if(activeTab==='weather')load();else if(activeTab==='water')loadWater();else tideView.load()});
 $('#refresh').onclick=()=>load(true);
 function render(data){
  activeData=data;const today=kstDate().replaceAll('-','');
@@ -120,5 +122,7 @@ async function loadWater(force=false){
  finally{if(ticket===waterSerial)$('#water-refresh').disabled=false}
 }
 $('#water-refresh').onclick=()=>loadWater(true);
-document.addEventListener('visibilitychange',()=>{if(!document.hidden){$('#today').textContent=dateLabel(kstDate());if($('#water').hidden)load();else loadWater()}});
+const tideView=createTideView({request:jsonRequest,apiBase:cfg.apiBase,demo});
+$('#tide-refresh').onclick=()=>tideView.load(true);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){$('#today').textContent=dateLabel(kstDate());if(activeTab==='weather')load();else if(activeTab==='water')loadWater();else tideView.load()}});
 load();

@@ -145,6 +145,41 @@ async function fetchMid(env,region){
  throw fail('아직 중기예보 자료가 제공되지 않았습니다.');
 }
 
+// KHOA Smart Tide Forecast public website data. Not the keyed data.go.kr API.
+const tideStation={id:'SO_0757',name:'안남리',lat:34.730278,lng:127.264444};
+function tideDate(value){
+ if(!/^\d{8}$/.test(value||''))return null;
+ const d=new Date(`${value.slice(0,4)}-${value.slice(4,6)}-${value.slice(6,8)}T00:00:00+09:00`);
+ return Number.isFinite(+d)&&new Date(+d+32400000).toISOString().slice(0,10).replaceAll('-','')===value?d:null;
+}
+function normalizeTideWeek(json,start){
+ const raw=Array.isArray(json.weeklyData)?json.weeklyData:json.getWeeklyData?.weeklyData;
+ if(!Array.isArray(raw))throw fail('물때 자료 형식이 변경되었습니다. 공식 자료를 확인해 주세요.');
+ const days=new Map(),first=+tideDate(start);
+ for(const r of raw){
+  const date=String(r.searchDate||'').replaceAll('-',''),d=tideDate(date);
+  if(!d||+d<first||+d>=first+7*86400000)continue;
+  if(r.obsPostName!==tideStation.name||Math.abs(Number(r.obsLat)-tideStation.lat)>.02||Math.abs(Number(r.obsLon)-tideStation.lng)>.02||!Number.isFinite(Number(r.obsLat))||!Number.isFinite(Number(r.obsLon)))throw fail('물때 예보지점이 일치하지 않습니다.');
+  const events=[];
+  if(r.flgView==='Y')for(const key of ['lvl1','lvl2','lvl3','lvl4']){
+   const [time,type,,rawHeight]=String(r[key]||'').split('/');
+   if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)||!['high','low'].includes(type))continue;
+   const height=/^-?\d+(\.\d+)?$/.test(rawHeight||'')?Number(rawHeight):null;
+   const at=`${date.slice(0,4)}-${date.slice(4,6)}-${date.slice(6,8)}T${time}:00+09:00`;
+   if(!events.some(e=>e.at===at))events.push({at,time,type,height});
+  }
+  events.sort((a,b)=>a.at.localeCompare(b.at));
+  days.set(date,{date,lunar:/^\d{4}\/\d{1,2}\/\d{1,2}$/.test(r.dateMoon||'')?r.dateMoon:null,mool:String(r.mool8||'').slice(0,16),events});
+ }
+ return {source:'국립해양조사원 스마트 조석예보',sourceUrl:'https://www.khoa.go.kr/swtc/main.do',station:tideStation,start,days:[...days.values()].sort((a,b)=>a.date.localeCompare(b.date)),fetchedAt:new Date().toISOString()};
+}
+async function fetchTideWeek(start){
+ const res=await fetch('https://www.khoa.go.kr/swtc/getWeeklyData.do',{method:'POST',body:new URLSearchParams({stDate:start,obsPostId:tideStation.id}),signal:AbortSignal.timeout(12000)});
+ if(!res.ok)throw fail('국립해양조사원 응답이 지연됩니다. 잠시 후 다시 확인해 주세요.');
+ let json;try{json=await res.json()}catch{throw fail('물때 자료를 읽지 못했습니다. 공식 자료를 확인해 주세요.')}
+ return normalizeTideWeek(json,start);
+}
+
 // Coalesce identical cache misses within this Worker instance.
 const pendingUpstream=new Map();
 async function shared(key,task){
@@ -163,7 +198,20 @@ export default {
     if(request.method==='OPTIONS'){headers['Access-Control-Allow-Methods']='GET, OPTIONS';return new Response(null,{status:204,headers});}
     if(request.method!=='GET')return respond({message:'GET 요청만 지원합니다.'},405);
     const url=new URL(request.url);
-    if(url.pathname==='/api/health')return respond({ok:true,version:'0.5.0',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/health')return respond({ok:true,version:'0.6.0',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/tide'){
+      const start=url.searchParams.get('start'),date=tideDate(start),today=tideDate(new Date(Date.now()+32400000).toISOString().slice(0,10).replaceAll('-',''));
+      const offset=date?(+date-today)/86400000:null;
+      if(offset!==-1&&offset!==6)return respond({message:'조회할 물때 날짜를 확인해 주세요.'},400);
+      try{
+        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/tide-v1/${tideStation.id}/${start}`);
+        const hit=cache?await cache.match(key):null;if(hit){headers['X-Data-Cache']='hit';return respond(await hit.json())}
+        headers['X-Data-Cache']='miss';
+        const data=await shared(key.url,()=>fetchTideWeek(start));
+        if(cache&&ctx?.waitUntil&&data.days.length===7&&data.days.every(d=>d.events.length))ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':'public, max-age=21600'}})));
+        return respond(data);
+      }catch(e){return respond({message:e.status?e.message:'물때 자료를 불러오지 못했습니다. 잠시 후 새로고침해 주세요.'},e.status||502);}
+    }
     if(url.pathname==='/api/mid'){
       const region=url.searchParams.get('region');
       if(!Object.hasOwn(midRegions,region))return respond({message:'중기예보 지역을 확인해 주세요.'},400);

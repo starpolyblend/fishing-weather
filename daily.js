@@ -1,4 +1,4 @@
-import {weatherLabel,dayOffset,kstDate} from './core.js?v=0.5.1';
+import {weatherLabel,dayOffset,kstDate} from './core.js?v=0.6.0';
 export const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const valid=v=>typeof v==='number'&&Number.isFinite(v);
 export const unit=(v,u)=>valid(v)?`${v}${u}`:'—';
