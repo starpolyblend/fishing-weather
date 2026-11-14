@@ -1,11 +1,11 @@
-import {isNight} from './daylight.js?v=0.6.6';
-import {createObservationView} from './observation.js?v=0.6.6';
-import {createTideView} from './tides.js?v=0.6.6';
-import {windArrow,windSpeed} from './wind.js?v=0.6.6';
-import {waterChart,bindWaterCharts} from './water-chart.js?v=0.6.6';
-import {dayOffset,grid,kstDate} from './core.js?v=0.6.6';
-import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.6.6';
-import {weatherLabel} from './core.js?v=0.6.6';
+import {isNight} from './daylight.js?v=0.6.7';
+import {createObservationView} from './observation.js?v=0.6.7';
+import {createTideView} from './tides.js?v=0.6.7';
+import {windArrow,windSpeed} from './wind.js?v=0.6.7';
+import {waterChart,bindWaterCharts} from './water-chart.js?v=0.6.7';
+import {dayOffset,grid,kstDate} from './core.js?v=0.6.7';
+import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.6.7';
+import {weatherLabel} from './core.js?v=0.6.7';
 const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),demo=new URLSearchParams(location.search).get('demo')==='1';
 const places=(cfg.locations||[]).slice(0,4),memory=new Map(),midMemory=new Map();let saved;
 try{saved=localStorage.getItem('fishing-place')}catch{}
@@ -85,7 +85,7 @@ const waterMemory=new Map(),chartMemory=new Map();let waterData=null,waterSerial
 try{const saved=localStorage.getItem('fishing-water-station');if(['4007630','4007625'].includes(saved))waterSelection=saved}catch{}
 const waterTime=t=>t?new Intl.DateTimeFormat('ko-KR',{month:'numeric',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:'Asia/Seoul'}).format(new Date(t)):'관측 시각 없음';
 function renderWaterButtons(){
- $('#water-places').innerHTML=[['4007630','가장교'],['4007625','보성강댐']].map(([id,name])=>`<button data-water="${id}" aria-pressed="${id===waterSelection}">${name}</button>`).join('');
+ $('#water-places').innerHTML=[['4007625','보성강댐'],['4007630','가장교']].map(([id,name])=>`<button data-water="${id}" aria-pressed="${id===waterSelection}">${name}</button>`).join('');
 }
 renderWaterButtons();
 $('#water-places').onclick=e=>{const b=e.target.closest('[data-water]');if(!b)return;waterSelection=b.dataset.water;try{localStorage.setItem('fishing-water-station',waterSelection)}catch{}renderWaterButtons();loadWater()};

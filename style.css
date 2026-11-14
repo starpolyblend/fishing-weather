@@ -48,3 +48,12 @@ nav.main-tabs{background:#edf3fa;box-shadow:none}
 .daily-table .date-cell.selected{background:#dcecff;box-shadow:inset 0 3px #1557a0}
 .water-station .water-source-button{display:flex;align-items:center;justify-content:center;min-height:56px;padding:12px 10px;margin:16px 0 6px;border:1px solid #1557a0;border-radius:10px;background:#1557a0;color:#fff;font-size:22px;font-weight:750;line-height:1.4;text-decoration:none;text-align:center}
 .water-source-button:hover{background:#104b8c}
+
+/* v0.6.7: clearer tide header and separation between dates */
+.tide-table thead{background:#215b97;color:#fff}
+.tide-table thead th{height:60px;padding:16px 4px;vertical-align:middle;font-size:17px;font-weight:750;border-bottom:3px solid #154575}
+.tide-table thead th+th{border-left:1px solid #ffffff40}
+.tide-table tbody th,.tide-table tbody td{padding-top:16px;padding-bottom:16px;border-bottom:2px solid #9bb3ce}
+.tide-table tbody tr:nth-child(even){background:#f6f9fd}
+.tide-table tbody tr.tide-today{background:#eaf3ff}
+.tide-table tbody th{vertical-align:middle}
