@@ -1,4 +1,4 @@
-import {esc} from './daily.js?v=0.6.2';
+import {esc} from './daily.js?v=0.6.3';
 export function createObservationView({request,demo}){
  const holder=document.querySelector('#observation'),memory=new Map();let serial=0;
  const names={yeolhwa:'보성군',hyanggyo:'보성',songsan:'포두',sacho:'북일'};

@@ -1,10 +1,11 @@
-import {createObservationView} from './observation.js?v=0.6.2';
-import {createTideView} from './tides.js?v=0.6.2';
-import {windArrow,windSpeed} from './wind.js?v=0.6.2';
-import {waterChart,bindWaterCharts} from './water-chart.js?v=0.6.2';
-import {dayOffset,grid,kstDate} from './core.js?v=0.6.2';
-import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.6.2';
-import {weatherLabel} from './core.js?v=0.6.2';
+import {isNight} from './daylight.js?v=0.6.3';
+import {createObservationView} from './observation.js?v=0.6.3';
+import {createTideView} from './tides.js?v=0.6.3';
+import {windArrow,windSpeed} from './wind.js?v=0.6.3';
+import {waterChart,bindWaterCharts} from './water-chart.js?v=0.6.3';
+import {dayOffset,grid,kstDate} from './core.js?v=0.6.3';
+import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.6.3';
+import {weatherLabel} from './core.js?v=0.6.3';
 const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),demo=new URLSearchParams(location.search).get('demo')==='1';
 const places=(cfg.locations||[]).slice(0,4),memory=new Map(),midMemory=new Map();let saved;
 try{saved=localStorage.getItem('fishing-place')}catch{}
@@ -45,7 +46,7 @@ function renderHours(data){
  const today=kstDate().replaceAll('-',''),hour=new Date(Date.now()+32400000).toISOString().slice(11,13)+'00';
  const rows=data.rows.filter(r=>r.date===selectedDate&&(r.date!==today||r.time>=hour)&&(r.temp!=null||r.sky!=null||r.pty!=null)).sort((a,b)=>a.time.localeCompare(b.time));
  if(!rows.length){$('#hourly-content').innerHTML=empty(`${dateText(selectedDate)} 시간별 예보 없음`,'시간별 예보가 제공되는 날짜를 선택해 주세요.');return}
- const fields=[['날씨',r=>weatherIcon(weatherLabel(r)),'condition'],['기온',r=>unit(r.temp,'℃'),'temperature'],['강수확률',r=>unit(r.pop,'%'),'probability'],['강수량',r=>rainMarkup(r.rain),'rainfall'],['풍향',r=>windArrow(r),'direction'],['풍속',r=>windSpeed(r),'wind']];
+ const fields=[['날씨',r=>weatherIcon(weatherLabel(r),isNight(r.date,r.time,place.lat,place.lng)),'condition'],['기온',r=>unit(r.temp,'℃'),'temperature'],['강수확률',r=>unit(r.pop,'%'),'probability'],['강수량',r=>rainMarkup(r.rain),'rainfall'],['풍향',r=>windArrow(r),'direction'],['풍속',r=>windSpeed(r),'wind']];
  $('#hourly-content').innerHTML=`<div id="timeline-scroll" class="timeline-scroll" tabindex="0" role="region" aria-label="시간별 예보, 좌우로 스크롤"><table class="forecast-table hourly-table"><caption class="sr-only">${esc(place.name)} ${dateText(selectedDate)} 시간별 예보</caption><thead><tr><th scope="col" class="row-label">날짜<br>시간</th>${rows.map(r=>`<th scope="col" class="time-head"><span>${dateText(r.date,false)}</span><strong>${r.time.slice(0,2)}시</strong></th>`).join('')}</tr></thead><tbody>${fields.map(([label,get,cls])=>`<tr class="${cls}"><th scope="row" class="row-label">${label}</th>${rows.map(r=>`<td>${get(r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div><p class="meta compact">화살표는 바람이 향하는 쪽 · 북풍 ↓<br>강수량은 1시간 예상량 · 옆으로 밀어보세요 →</p>`;
  const scroll=$('#timeline-scroll'),step=()=>scroll.querySelector('.time-head').getBoundingClientRect().width||64;
  scroll.scrollLeft=hourScroll;
@@ -71,13 +72,13 @@ async function load(force=false){
  const region=place.midRegion||({yeolhwa:'boseong',hyanggyo:'boseong',songsan:'goheung',sacho:'gangjin'})[place.id],key=`${g.nx},${g.ny}`;
  const cache=cached(memory,'weather',key,21600000,d=>Array.isArray(d?.rows)),midCache=cached(midMemory,'mid',region,86400000,d=>Array.isArray(d?.days));
  const midPromise=(!force&&midCache&&!midCache.restored&&Date.now()-midCache.at<1800000?Promise.resolve(midCache.data):jsonRequest('/api/mid',{region}).then(d=>{if(!Array.isArray(d.days))throw Error('중기예보 형식을 확인해 주세요.');remember(midMemory,'mid',region,d);return d})).then(d=>({mid:d}),()=>({...(midCache?{mid:midCache.data}:{}),midError:midCache?'중기예보 갱신 실패 · 이전 발표 자료입니다.':'중기예보를 불러오지 못했습니다. 단기예보만 표시합니다.'}));
- $('#refresh').disabled=true;if(cache){render({...cache.data,...(midCache?{mid:midCache.data}:{}),midLoading:!midCache});$('#weather-content').insertAdjacentHTML('afterbegin','<p class="loading-note">저장된 예보 표시 중 · 최신 자료 확인 중…</p>')}else $('#weather-content').innerHTML=empty('날씨를 가져오는 중입니다.','잠시만 기다려 주세요.');
+ $('#refresh').disabled=true;if(cache){render({...cache.data,...(midCache?{mid:midCache.data}:{}),midLoading:!midCache});$('#weather-content').insertAdjacentHTML('afterbegin','<p class="loading-note">예보 업데이트 확인 중…</p>')}else $('#weather-content').innerHTML=empty('날씨를 가져오는 중입니다.','잠시만 기다려 주세요.');
  try{
   const data=!force&&cache&&!cache.restored&&Date.now()-cache.at<300000?cache.data:await jsonRequest('/api/weather',g);
   if(!Array.isArray(data.rows))throw Error('날씨 자료 형식을 확인해 주세요.');if(data!==cache?.data)remember(memory,'weather',key,data);
   if(ticket===serial){render({...data,...(midCache?{mid:midCache.data}:{}),midLoading:!midCache});$('#refresh').disabled=false;}
   const mid=await midPromise;if(ticket===serial)render({...data,...mid});
- }catch(e){if(ticket===serial){if(cache){render({...cache.data,...(midCache?{mid:midCache.data}:{})});$('#weather-content').insertAdjacentHTML('afterbegin','<p class="notice">최신 자료 갱신 실패 · 이전에 받은 예보입니다. 발표 시각을 확인해 주세요.</p>')}else $('#weather-content').innerHTML=empty('날씨를 확인할 수 없습니다.',e.message||'잠시 후 다시 시도해 주세요.')}}
+ }catch(e){if(ticket===serial){if(cache){render({...cache.data,...(midCache?{mid:midCache.data}:{})});$('#weather-content').insertAdjacentHTML('afterbegin','<p class="notice">갱신 지연 · 이전 예보 표시 중 (발표 시각 확인)</p>')}else $('#weather-content').innerHTML=empty('날씨를 확인할 수 없습니다.',e.message||'잠시 후 다시 시도해 주세요.')}}
  finally{if(ticket===serial)$('#refresh').disabled=false}
 }
 const waterMemory=new Map(),chartMemory=new Map();let waterData=null,waterSerial=0,waterSelection='4007630';
@@ -104,7 +105,7 @@ async function loadWater(force=false){
   waterData={stations:[{...level,officialChart:chart,chartLoading,chartFailed}]};renderWater();
   if(levelNotice)$('#water-content').insertAdjacentHTML('afterbegin',`<p class="notice">${esc(levelNotice)}</p>`);
  };
- if(cache){level=cache.data;levelNotice='저장된 수위 표시 중 · 최신 관측자료 확인 중…';paint()}else $('#water-content').innerHTML=empty('수위를 가져오는 중입니다.','선택한 관측소부터 확인합니다.');
+ if(cache){level=cache.data;levelNotice='수위 업데이트 확인 중…';paint()}else $('#water-content').innerHTML=empty('수위를 가져오는 중입니다.','선택한 관측소부터 확인합니다.');
  $('#water-refresh').disabled=true;
  if(demo){$('#water-content').innerHTML=empty('수위 예시는 제공하지 않습니다.','실제 정보 화면에서 확인해 주세요.');$('#water-refresh').disabled=false;return}
  // This task never holds up the level/history response.

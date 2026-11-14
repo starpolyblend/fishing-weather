@@ -1,0 +1,9 @@
+name = "fishing-weather-api"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+
+[vars]
+KMA_PROVIDER = "data-go-kr"
+ALLOWED_ORIGINS = "https://YOUR-NAME.github.io"
+# API 인증키를 여기에 입력하지 마세요.
+# 선택: ALLOWED_GRIDS = "57,34;58,34" (확인한 실제 격자로 변경)
