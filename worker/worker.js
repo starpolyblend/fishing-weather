@@ -21,8 +21,8 @@ async function fetchForecast(env,nx,ny){
   if(!['data-go-kr','apihub'].includes(provider))throw fail('날씨 제공기관 설정을 확인해 주세요.',503);
   const base=provider==='apihub'?'https://apihub.kma.go.kr/api/typ02/openApi/VilageFcstInfoService_2.0/getVilageFcst':'https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst';
   for(const issue of issueTimes()){
-    let all=[], total=0;
-    for(let page=1;page<=5;page++){
+    const pageSize=1000;
+    const getPage=async page=>{
       const url=new URL(base);
       Object.entries({pageNo:page,numOfRows:1000,dataType:'JSON',base_date:issue.date,base_time:issue.time,nx,ny}).forEach(([k,v])=>url.searchParams.set(k,v));
       url.searchParams.set(provider==='apihub'?'authKey':'serviceKey',decodedKey(env.KMA_SERVICE_KEY));
@@ -30,13 +30,17 @@ async function fetchForecast(env,nx,ny){
       if(!res.ok)throw fail('기상청 연결 상태를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.');
       let json;try{json=await res.json()}catch{throw fail('기상청 응답을 읽지 못했습니다. 인증키와 활용신청 상태를 확인해 주세요.');}
       const result=json?.response, code=String(result?.header?.resultCode||'');
-      if(code==='03'||code==='3'){all=[];break;}
+      if(code==='03'||code==='3')return null;
       if(!['00','0'].includes(code))throw fail(['20','21','22','30','31','32'].includes(code)?'기상청 인증키 또는 해당 API의 활용신청 상태를 확인해 주세요.':'기상청 자료를 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.');
       const raw=result?.body?.items?.item;const items=Array.isArray(raw)?raw:raw&&typeof raw==='object'?[raw]:[];
-      all.push(...items);total=Number(result?.body?.totalCount)||all.length;
-      if(all.length>=total||items.length===0)break;
-      if(page===5)throw fail('예보 자료가 너무 많아 불러오지 못했습니다.');
-    }
+      return {items,total:Number(result?.body?.totalCount)||items.length};
+    };
+    const first=await getPage(1);if(!first)continue;
+    const count=Math.ceil(first.total/pageSize);if(count>5)throw fail('예보 자료가 너무 많아 불러오지 못했습니다.');
+    const rest=await Promise.all(Array.from({length:Math.max(0,count-1)},(_,i)=>getPage(i+2)));
+    if(rest.some(page=>!page))continue;
+    const all=[...first.items,...rest.flatMap(page=>page.items)];
+    if(all.length<first.total)throw fail('예보 자료 일부가 누락되었습니다. 잠시 후 다시 시도해 주세요.');
     const rows=forecasts(all,issue);if(!rows.length)continue;
     return {source:'기상청 단기예보',grid:{nx,ny},issuedAt:`${issue.date.slice(0,4)}-${issue.date.slice(4,6)}-${issue.date.slice(6,8)}T${issue.time.slice(0,2)}:00:00+09:00`,fetchedAt:new Date().toISOString(),rows};
   }
@@ -83,12 +87,12 @@ async function fetchOfficialChart(id){
  const section=rows.filter(r=>num(r.xVar)!==null&&num(r.yVar)!==null).map(r=>({x:num(r.xVar),y:num(r.yVar)}));
  return {thresholds,section};
 }
-async function fetchWater(){
- const stations=await Promise.all(waterStations.map(async station=>{
+async function fetchWater(selected=null,includeChart=true){
+ const stations=await Promise.all(waterStations.filter(s=>!selected||s.id===selected).map(async station=>{
   const sourceUrl=`https://www.yeongsanriver.go.kr/sumun/waterDetail.do?wlobscd=${station.id}`;
   const base={id:station.id,name:station.name,unit:station.unit,datum:station.datum,sourceUrl};
   try{
-   const chartPromise=fetchOfficialChart(station.id).catch(()=>null);
+   const chartPromise=includeChart?fetchOfficialChart(station.id).catch(()=>null):Promise.resolve(null);
    const res=await fetch(sourceUrl,{signal:AbortSignal.timeout(10000)});
    if(!res.ok)throw new Error('upstream');
    const parsed=parseWater(await res.text(),station);
@@ -141,36 +145,47 @@ async function fetchMid(env,region){
  throw fail('아직 중기예보 자료가 제공되지 않았습니다.');
 }
 
+// Coalesce identical cache misses within this Worker instance.
+const pendingUpstream=new Map();
+async function shared(key,task){
+ if(pendingUpstream.has(key))return pendingUpstream.get(key);
+ const promise=task();pendingUpstream.set(key,promise);
+ try{return await promise}finally{pendingUpstream.delete(key)}
+}
 export default {
   async fetch(request,env,ctx){
+    const started=Date.now();
     const origin=request.headers.get('Origin')||'',allowed=(env.ALLOWED_ORIGINS||'').split(',').map(s=>s.trim()).filter(Boolean);
     const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Vary':'Origin','X-Content-Type-Options':'nosniff'};
-    const respond=(data,status=200)=>new Response(JSON.stringify(data),{status,headers});
+    const respond=(data,status=200)=>{headers['Server-Timing']=`worker;dur=${Date.now()-started}`;return new Response(JSON.stringify(data),{status,headers})};
     if(origin&&!allowed.includes(origin))return respond({message:'허용된 사이트 주소를 확인해 주세요.'},403);
     if(origin)headers['Access-Control-Allow-Origin']=origin;
     if(request.method==='OPTIONS'){headers['Access-Control-Allow-Methods']='GET, OPTIONS';return new Response(null,{status:204,headers});}
     if(request.method!=='GET')return respond({message:'GET 요청만 지원합니다.'},405);
     const url=new URL(request.url);
-    if(url.pathname==='/api/health')return respond({ok:true,version:'0.4.1',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/health')return respond({ok:true,version:'0.5.0',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
     if(url.pathname==='/api/mid'){
       const region=url.searchParams.get('region');
       if(!Object.hasOwn(midRegions,region))return respond({message:'중기예보 지역을 확인해 주세요.'},400);
       try{
         const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/mid-v1/${region}/${midIssueTimes()[0]}`);
         const hit=cache?await cache.match(key):null;if(hit)return respond(await hit.json());
-        const data=await fetchMid(env,region);
+        const data=await shared(key.url,()=>fetchMid(env,region));
         if(cache&&ctx?.waitUntil)ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':'public, max-age=1800'}})));
         return respond(data);
       }catch(e){return respond({message:e.status?e.message:'중기예보를 불러오지 못했습니다.'},e.status||502);}
     }
-    if(url.pathname==='/api/water'){
+    if(url.pathname==='/api/water'||url.pathname==='/api/water-chart'){
+      const id=url.searchParams.get('station'),chartOnly=url.pathname==='/api/water-chart';
+      if((id&&!waterStations.some(s=>s.id===id))||(chartOnly&&!id))return respond({message:'관측소를 확인해 주세요.'},400);
       try{
-        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/water-v3`);
-        const hit=cache?await cache.match(key):null;if(hit)return respond(await hit.json());
-        const data=await fetchWater();
-        if(cache&&ctx?.waitUntil&&data.stations.every(s=>s.level!==null))ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':'public, max-age=300'}})));
+        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/water-v4/${chartOnly?'chart':'level'}/${id||'all'}`);
+        const hit=cache?await cache.match(key):null;if(hit){headers['X-Data-Cache']='hit';return respond(await hit.json())}
+        headers['X-Data-Cache']='miss';
+        const data=await shared(key.url,async()=>chartOnly?{station:id,officialChart:await fetchOfficialChart(id),fetchedAt:new Date().toISOString()}:await fetchWater(id,!id));
+        if(cache&&ctx?.waitUntil&&(chartOnly||data.stations.every(s=>s.level!==null)))ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':`public, max-age=${chartOnly?1800:300}`}})));
         return respond(data);
-      }catch{return respond({message:'수위 자료를 가져오지 못했습니다.'},502);}
+      }catch{return respond({message:chartOnly?'그래프 부가자료를 가져오지 못했습니다.':'수위 자료를 가져오지 못했습니다.'},502);}
     }
     if(url.pathname!=='/api/weather')return respond({message:'주소를 확인해 주세요.'},404);
     if(!env.KMA_SERVICE_KEY)return respond({message:'날씨 연결을 준비하고 있습니다.'},503);
@@ -178,12 +193,12 @@ export default {
     if(!Number.isInteger(nx)||!Number.isInteger(ny)||nx<1||nx>149||ny<1||ny>253)return respond({message:'예보 위치를 확인해 주세요.'},400);
     // 선택사항: 예: 57,34;58,34. 등록한 격자 외 호출을 차단합니다.
     if(env.ALLOWED_GRIDS&&!env.ALLOWED_GRIDS.split(';').map(s=>s.trim()).includes(`${nx},${ny}`))return respond({message:'등록된 예보 위치가 아닙니다.'},400);
-    const key=new Request(`${url.origin}/cache/weather-v3/${env.KMA_PROVIDER||'data-go-kr'}/${nx}/${ny}`);
+    const key=new Request(`${url.origin}/cache/weather-v4/${env.KMA_PROVIDER||'data-go-kr'}/${nx}/${ny}`);
     try{
       const cache=globalThis.caches?.default;
       const cached=cache?await cache.match(key):null;
       if(cached)return respond(await cached.json());
-      const data=await fetchForecast(env,nx,ny);
+      const data=await shared(key.url,()=>fetchForecast(env,nx,ny));
       if(cache&&ctx?.waitUntil)ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Content-Type':'application/json','Cache-Control':'public, max-age=300'}})));
       return respond(data);
     }catch(e){return respond({message:e.status?e.message:'자료를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'},e.status||502);}
