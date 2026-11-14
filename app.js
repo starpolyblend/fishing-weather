@@ -1,16 +1,16 @@
-import {isNight} from './daylight.js?v=0.6.5';
-import {createObservationView} from './observation.js?v=0.6.5';
-import {createTideView} from './tides.js?v=0.6.5';
-import {windArrow,windSpeed} from './wind.js?v=0.6.5';
-import {waterChart,bindWaterCharts} from './water-chart.js?v=0.6.5';
-import {dayOffset,grid,kstDate} from './core.js?v=0.6.5';
-import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.6.5';
-import {weatherLabel} from './core.js?v=0.6.5';
+import {isNight} from './daylight.js?v=0.6.6';
+import {createObservationView} from './observation.js?v=0.6.6';
+import {createTideView} from './tides.js?v=0.6.6';
+import {windArrow,windSpeed} from './wind.js?v=0.6.6';
+import {waterChart,bindWaterCharts} from './water-chart.js?v=0.6.6';
+import {dayOffset,grid,kstDate} from './core.js?v=0.6.6';
+import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.6.6';
+import {weatherLabel} from './core.js?v=0.6.6';
 const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),demo=new URLSearchParams(location.search).get('demo')==='1';
 const places=(cfg.locations||[]).slice(0,4),memory=new Map(),midMemory=new Map();let saved;
 try{saved=localStorage.getItem('fishing-place')}catch{}
 let place=places.find(p=>p.id===saved)||places[0],serial=0,selectedDate=kstDate().replaceAll('-',''),activeData=null,hourScroll=0;
-function diskKey(kind,key){return `fishing-cache-v1:${cfg.apiBase}:${kind}:${key}`}
+function diskKey(kind,key){return `fishing-cache-v2:${cfg.apiBase}:${kind}:${key}`}
 function cached(map,kind,key,maxAge,valid){
  if(map.has(key)){const c=map.get(key),age=Date.now()-c.at;if(age>=0&&age<maxAge&&valid(c.data))return c;map.delete(key)}
  try{const c=JSON.parse(localStorage.getItem(diskKey(kind,key)));const age=Date.now()-c?.at;
@@ -33,7 +33,7 @@ function render(data){
  if(selectedDate<today||selectedDate>dayOffset(10).replaceAll('-','')){selectedDate=today;hourScroll=0}
  const previousDaily=$('.daily-scroll')?.scrollLeft||0;
  const warning=Date.now()-Date.parse(data.issuedAt)>21600000?'<p class="notice">6시간 이상 지난 예보입니다. 새로고침해 주세요.</p>':'';
- $('#weather-content').innerHTML=warning+(place.approximate?'<p class="meta compact">마을 주변 기준 예보</p>':'')+dailyTable({...data,placeName:place.name},selectedDate)+`<p class="table-legend"><span class="low">최저</span> / <span class="high">최고</span> · 날짜를 누르면 시간별 예보</p><p class="mid-status">${data.midError?esc(data.midError):data.midLoading?'중기예보 불러오는 중…':''}</p><div class="timeline-heading hourly-heading"><h2>시간별 예보</h2><span id="selected-date">${dateText(selectedDate)}</span></div><div id="hourly-content"></div><details class="forecast-notes"><summary>예보 기준·발표 시각</summary><p>기온은 하루 최저·최고 예보입니다. 오전·오후 기온이 아닙니다. 값이 없으면 —로 표시합니다.</p><p>단기 강수확률은 해당 오전·오후 시간별 예보의 최대값입니다. 강수량은 시간별 예보에서 확인하세요.</p><p>풍향 이름은 바람이 불어오는 쪽이며, 화살표는 향하는 쪽입니다. 예: 북풍 ↓, 서풍 →. 먼 날짜의 풍속은 기상청 정성예보(약함·약간 강함·강함)로 표시합니다.</p><p>중기예보는 광주·전남 날씨와 해당 시군 기온입니다. +8~10일은 종일 예보이며, 중기 강수량과 시간별 예보는 제공되지 않습니다.</p><p>단기 ${esc(data.issuedAt?.slice(5,16).replace('T',' '))}${data.mid?.issuedAt?` / 중기 ${esc(data.mid.issuedAt.slice(5,16).replace('T',' '))}`:''} 발표 · 기상청</p></details>`;
+ $('#weather-content').innerHTML=warning+(place.approximate?'<p class="meta compact">마을 주변 기준 예보</p>':'')+dailyTable({...data,placeName:place.name},selectedDate)+`<p class="table-legend"><span class="low">최저</span> / <span class="high">최고</span> · 날짜를 누르면 시간별 예보</p><p class="mid-status">${data.midError?esc(data.midError):data.midLoading?'중기예보 불러오는 중…':''}</p><div class="timeline-heading hourly-heading"><h2>시간별 예보</h2><span id="selected-date">${dateText(selectedDate)}</span></div><div id="hourly-content"></div><details class="forecast-notes"><summary>예보 기준·발표 시각</summary><p>기온은 하루 최저·최고 예보입니다. 오전·오후 기온이 아닙니다. 값이 없으면 —로 표시합니다.</p><p>단기 강수확률은 해당 오전·오후 시간별 예보의 최대값입니다. 강수량은 시간별 예보에서 확인하세요.</p><p>풍향 이름은 바람이 불어오는 쪽이며, 화살표는 향하는 쪽입니다. 예: 북풍 ↓, 서풍 →. 먼 날짜의 풍속은 기상청 정성예보(약함·약간 강함·강함)로 표시합니다.</p><p>중기예보는 광주·전남 날씨와 해당 시군 기온입니다. +8~10일은 종일 예보이며, 중기 강수량과 시간별 예보는 제공되지 않습니다.</p><p>${data.dailyMinimumSupplement?`오늘 최저기온은 ${esc(data.dailyMinimumSupplement.issuedAt.slice(5,16).replace('T',' '))} 발표 예보로 보완했습니다.`:''}</p><p>단기 ${esc(data.issuedAt?.slice(5,16).replace('T',' '))}${data.mid?.issuedAt?` / 중기 ${esc(data.mid.issuedAt.slice(5,16).replace('T',' '))}`:''} 발표 · 기상청</p></details>`;
  $('.daily-scroll').scrollLeft=previousDaily;
  document.querySelectorAll('[data-date]').forEach(b=>b.onclick=()=>{
   selectedDate=b.dataset.date;hourScroll=0;

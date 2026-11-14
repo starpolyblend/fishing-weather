@@ -1,11 +1,11 @@
-import {esc} from './daily.js?v=0.6.5';
+import {esc} from './daily.js?v=0.6.6';
 export function createObservationView({request,demo}){
  const holder=document.querySelector('#observation'),memory=new Map();let serial=0;
  const names={yeolhwa:'보성군',hyanggyo:'보성',songsan:'포두',sacho:'북일'};
  const today=()=>new Date(Date.now()+32400000).toISOString().slice(0,10);
  function paint(data,note=''){
   const sameDay=data?.observedAt?.slice(0,10)===today();
-  const rain=sameDay&&Number.isFinite(data?.rain)?`${data.rain}mm`:'확인 불가';
+  const rain=sameDay&&Number.isFinite(data?.rain)?`${data.rain}mm`:sameDay&&data?.rainDash?'-':'확인 불가';
   const name=data?.station?.name||'가까운 관측지점';
   const time=data?.observedAt?new Intl.DateTimeFormat('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Seoul'}).format(new Date(data.observedAt)):'';
   const delayed=data?.observedAt&&Date.now()-Date.parse(data.observedAt)>1800000;
@@ -21,7 +21,7 @@ export function createObservationView({request,demo}){
   try{
    const data=await request('/api/observation',{place});
    if(!data.station||!Object.hasOwn(data,'rain'))throw Error('관측자료 형식 확인 불가');
-   if(Number.isFinite(data.rain))memory.set(place,{data,at:Date.now()});
+   if(Number.isFinite(data.rain)||data.rainDash)memory.set(place,{data,at:Date.now()});
    if(ticket===serial)paint(data);
   }catch(e){if(ticket===serial)paint(usable?cached.data:{station:{name:names[place]}},usable?'갱신 실패 · 이전 관측자료':'관측자료 확인 불가 · 잠시 후 새로고침해 주세요.');}
  }

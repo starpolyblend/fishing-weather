@@ -47,6 +47,48 @@ async function fetchForecast(env,nx,ny){
   throw fail('아직 발표된 예보 자료가 없습니다. 잠시 후 다시 시도해 주세요.');
 }
 
+
+// Preserve the latest forecast; supplement only today's missing official TMN.
+async function supplementTodayMinimum(data,env,nx,ny,origin,ctx,now=new Date()){
+ const today=new Date(+now+32400000).toISOString().slice(0,10).replaceAll('-','');
+ if(data.rows.some(r=>r.date===today&&Number.isFinite(r.tmin)))return data;
+ const provider=env.KMA_PROVIDER||'data-go-kr';
+ const cache=globalThis.caches?.default;
+ const key=new Request(`${origin}/cache/today-minimum-v1/${provider}/${nx}/${ny}/${today}`);
+ let value;
+ try{
+  const hit=cache?await cache.match(key):null;
+  if(hit)value=await hit.json();
+  if(!value){
+   value=await shared(key.url,async()=>{
+    const yesterday=new Date(+new Date(`${today.slice(0,4)}-${today.slice(4,6)}-${today.slice(6,8)}T00:00:00+09:00`)-86400000+32400000).toISOString().slice(0,10).replaceAll('-','');
+    const candidates=[{date:today,time:'0200'},{date:yesterday,time:'2300'}];
+    for(const issue of candidates){
+     const issuedAt=`${issue.date.slice(0,4)}-${issue.date.slice(4,6)}-${issue.date.slice(6,8)}T${issue.time.slice(0,2)}:00:00+09:00`;
+     if(Date.parse(issuedAt)>=Date.parse(data.issuedAt))continue;
+     const base=provider==='apihub'?'https://apihub.kma.go.kr/api/typ02/openApi/VilageFcstInfoService_2.0/getVilageFcst':'https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst';
+     const url=new URL(base);
+     Object.entries({pageNo:1,numOfRows:1000,dataType:'JSON',base_date:issue.date,base_time:issue.time,nx,ny}).forEach(([k,v])=>url.searchParams.set(k,v));
+     url.searchParams.set(provider==='apihub'?'authKey':'serviceKey',decodedKey(env.KMA_SERVICE_KEY));
+     try{
+      const response=await fetch(url,{signal:AbortSignal.timeout(4000)});
+      if(!response.ok)continue;
+      const json=await response.json(),result=json?.response;
+      if(!['00','0'].includes(String(result?.header?.resultCode)))continue;
+      const raw=result?.body?.items?.item,items=Array.isArray(raw)?raw:raw?[raw]:[];
+      const item=items.find(i=>i.category==='TMN'&&i.fcstDate===today&&numberOrNull(i.fcstValue)!==null);
+      if(item)return {date:today,value:numberOrNull(item.fcstValue),issuedAt};
+     }catch{/* Supplemental failure must not discard the current forecast. */}
+    }
+    return null;
+   });
+   if(value&&cache&&ctx?.waitUntil)ctx.waitUntil(cache.put(key,new Response(JSON.stringify(value),{headers:{'Cache-Control':'public, max-age=21600'}})));
+  }
+ }catch{/* Cache or supplemental request failure leaves the main forecast usable. */}
+ if(value?.date===today&&Number.isFinite(value.value)&&Date.parse(value.issuedAt)<Date.parse(data.issuedAt))return {...data,dailyMinimumSupplement:value};
+ return data;
+}
+
 const waterStations=[
  {id:'4007630',name:'보성군 가장교',unit:'m',datum:'수위표수위',column:1},
  {id:'4007625',name:'보성강댐',unit:'EL.m',datum:'해발수위',column:3}
@@ -222,9 +264,10 @@ async function fetchObservations(){
   const n=numberOrNull(row?.awsPcpDay);
   const sameDay=valid&&tm.slice(0,8)===today;
   // Missing values and yesterday's totals are never represented as today's zero.
+  const rainDash=!!sameDay&&String(row?.awsPcpDay??'').trim()==='-';
   const rain=sameDay&&n!==null&&n>=0?n:null;
-  observations[place]={station,observedAt:valid?at:null,rain,delayed:!valid||Date.now()-Date.parse(at)>1800000,
-   message:!row?'관측자료 확인 불가':!sameDay?'오늘 관측자료 확인 불가':rain===null?'일강수량 확인 불가':'',
+  observations[place]={station,observedAt:valid?at:null,rain,rainDash,delayed:!valid||Date.now()-Date.parse(at)>1800000,
+   message:!row?'관측자료 확인 불가':!sameDay?'오늘 관측자료 확인 불가':rain===null&&!rainDash?'일강수량 확인 불가':'',
    sourceUrl:'https://www.weather.go.kr/w/observation/land/aws-obs.do'};
  }
  return {observations,fetchedAt:new Date().toISOString()};
@@ -248,14 +291,14 @@ export default {
     if(request.method==='OPTIONS'){headers['Access-Control-Allow-Methods']='GET, OPTIONS';return new Response(null,{status:204,headers});}
     if(request.method!=='GET')return respond({message:'GET 요청만 지원합니다.'},405);
     const url=new URL(request.url);
-    if(url.pathname==='/api/health')return respond({ok:true,version:'0.6.5',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/health')return respond({ok:true,version:'0.6.6',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
 
     if(url.pathname==='/api/observation'){
       const place=url.searchParams.get('place');
       if(!Object.hasOwn(observationStations,place))return respond({message:'관측 장소를 확인해 주세요.'},400);
       try{
         const day=new Date(Date.now()+32400000).toISOString().slice(0,10);
-        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/observations-v1/${day}`);
+        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/observations-v2/${day}`);
         const hit=cache?await cache.match(key):null;
         const data=hit?await hit.json():await shared(key.url,fetchObservations);
         if(!hit&&cache&&ctx?.waitUntil)ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':'public, max-age=300'}})));
@@ -263,7 +306,7 @@ export default {
       }catch(e){return respond({station:observationStations[place],message:e.status?e.message:'관측자료 확인 불가'},e.status||502);}
     }
     if(url.pathname==='/api/tide'){
-      if(url.searchParams.has('start'))return respond({message:'물때 화면 파일도 v0.6.5로 업데이트한 뒤 새로고침해 주세요.',code:'TIDE_VERSION'},409);
+      if(url.searchParams.has('start'))return respond({message:'물때 화면 파일도 v0.6.6로 업데이트한 뒤 새로고침해 주세요.',code:'TIDE_VERSION'},409);
       const dateKey=url.searchParams.get('date'),date=tideDate(dateKey),today=tideDate(new Date(Date.now()+32400000).toISOString().slice(0,10).replaceAll('-',''));
       const offset=date?(+date-today)/86400000:null;
       if(offset===null||offset< -1||offset>9)return respond({message:'조회할 물때 날짜를 확인해 주세요.'},400);
@@ -306,12 +349,12 @@ export default {
     if(!Number.isInteger(nx)||!Number.isInteger(ny)||nx<1||nx>149||ny<1||ny>253)return respond({message:'예보 위치를 확인해 주세요.'},400);
     // 선택사항: 예: 57,34;58,34. 등록한 격자 외 호출을 차단합니다.
     if(env.ALLOWED_GRIDS&&!env.ALLOWED_GRIDS.split(';').map(s=>s.trim()).includes(`${nx},${ny}`))return respond({message:'등록된 예보 위치가 아닙니다.'},400);
-    const key=new Request(`${url.origin}/cache/weather-v4/${env.KMA_PROVIDER||'data-go-kr'}/${nx}/${ny}`);
+    const key=new Request(`${url.origin}/cache/weather-v5/${env.KMA_PROVIDER||'data-go-kr'}/${nx}/${ny}`);
     try{
       const cache=globalThis.caches?.default;
       const cached=cache?await cache.match(key):null;
       if(cached)return respond(await cached.json());
-      const data=await shared(key.url,()=>fetchForecast(env,nx,ny));
+      const data=await shared(key.url,async()=>supplementTodayMinimum(await fetchForecast(env,nx,ny),env,nx,ny,url.origin,ctx));
       if(cache&&ctx?.waitUntil)ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Content-Type':'application/json','Cache-Control':'public, max-age=300'}})));
       return respond(data);
     }catch(e){return respond({message:e.status?e.message:'자료를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'},e.status||502);}
