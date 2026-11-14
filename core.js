@@ -17,7 +17,7 @@ export function issueTimes(now = new Date()) {
   return [0,1,2].map(i=>{ const d=new Date(t.getTime()-i*3*3600000);return {date:d.toISOString().slice(0,10).replaceAll('-',''),time:String(d.getUTCHours()).padStart(2,'0')+'00'}; });
 }
 export function numberOrNull(v) { if(v===null||v===undefined||String(v).trim()==='')return null;const n=Number(v);return Number.isFinite(n)&&n!==-999&&n!==-9999?n:null; }
-export function forecasts(items) {
+export function forecasts(items,issue) {
   const rows=new Map();
   for(const it of items){
     if(!/^\d{8}$/.test(it.fcstDate)||!/^\d{4}$/.test(it.fcstTime))continue;
@@ -28,12 +28,27 @@ export function forecasts(items) {
     if(it.category==='TMX')r.tmax=numberOrNull(v);
     if(it.category==='TMP')r.temp=numberOrNull(v);
     if(it.category==='POP')r.pop=numberOrNull(v);
+    if(it.category==='VEC')r.direction=numberOrNull(v);
     if(it.category==='WSD')r.wind=numberOrNull(v);
     if(it.category==='PTY')r.pty=numberOrNull(v);
     if(it.category==='SKY')r.sky=numberOrNull(v);
     if(it.category==='PCP')r.rain=(v==null||String(v).trim()===''||String(v)==='-999')?null:String(v);
   }
-  return [...rows.values()].filter(r=>'temp'in r||'pop'in r||'wind'in r||'rain'in r||'tmin'in r||'tmax'in r).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+  return applyForecastKinds([...rows.values()].filter(r=>'temp'in r||'pop'in r||'wind'in r||'rain'in r||'tmin'in r||'tmax'in r).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)),issue);
 }
 export function weatherLabel(row) { return ({1:'비',2:'비 또는 눈',3:'눈',4:'소나기'})[row.pty] || ({1:'맑음',3:'구름 많음',4:'흐림'})[row.sky] || '날씨'; }
 export function rainText(value){if(value==null)return '확인 불가';if(value==='강수없음'||value==='0'||value==='0.0')return '없음';return /mm|㎜/.test(value)?value:value+'mm';}
+
+function applyForecastKinds(rows,issue){
+ if(!issue||!/^\d{8}$/.test(issue.date)||!/^\d{4}$/.test(issue.time))return rows;
+ const start=new Date(`${issue.date.slice(0,4)}-${issue.date.slice(4,6)}-${issue.date.slice(6,8)}T00:00:00+09:00`);
+ const offset=Number(issue.time)>=1700?4:3;
+ const boundary=new Date(+start+offset*86400000+9*3600000).toISOString().slice(0,10).replaceAll('-','')+'0000';
+ for(const r of rows){
+  if(r.date+r.time<=boundary)continue;
+  r.qualitative=true;
+  if(r.wind!=null){r.windCode=r.wind;r.windLabel=({1:'약함',2:'약간 강함',3:'강함'})[r.wind]||null;r.wind=null;}
+  if(r.rain!=null&&/^\d+(\.0+)?$/.test(r.rain))r.rain=({0:'강수없음',1:'3mm 미만',2:'3~15mm 미만',3:'15mm 이상'})[Number(r.rain)]??null;
+ }
+ return rows;
+}
