@@ -1,4 +1,4 @@
-import {esc} from './daily.js?v=0.5.0';
+import {esc} from './daily.js?v=0.5.1';
 const finite=v=>typeof v==='number'&&Number.isFinite(v);
 export const observedText=t=>{const d=new Date(Date.parse(t)+32400000);return `${d.getUTCMonth()+1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`};
 export function chartModel(history,station={}){

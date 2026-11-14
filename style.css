@@ -11,3 +11,5 @@
 .water-chart,.water-station{min-width:0;max-width:100%}.official-legend{font-size:11px;gap:5px 9px}.official-legend i{width:14px}.water-history table{width:100%;table-layout:fixed;font-size:13px}.water-history th,.water-history td{overflow-wrap:anywhere;padding:5px 3px}
 
 .official-legend{font-size:14px;gap:7px 12px;line-height:1.5}.official-legend span{white-space:nowrap}
+
+.share-button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;flex-shrink:0;min-width:48px;min-height:48px;padding:4px 7px;background:transparent;border:0;font-size:12px;line-height:1.25}.share-button svg{width:27px;height:27px}#share-help{width:min(92vw,430px);padding:22px;border:1px solid #becbc2;border-radius:18px;color:#203c34}#share-help::backdrop{background:#0006}#share-help p{font-size:18px;margin:12px 0}#share-url{display:block;width:100%;min-width:0;font-size:15px;padding:10px;margin:14px 0;border:1px solid #becbc2;border-radius:8px}#copy-share{width:100%;min-height:48px;background:var(--green);color:white}#share-help form{text-align:right;margin-top:10px}#share-help form button{min-height:44px;padding:6px 18px}#share-status{min-height:1.6em}
