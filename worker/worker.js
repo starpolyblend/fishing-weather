@@ -201,6 +201,35 @@ async function fetchTideApi(date,env){
  return {source:'국립해양조사원 조석예보(고·저조) OpenAPI',sourceUrl:'https://www.data.go.kr/data/15156018/openapi.do',station:tideStation,date,days:[day],fetchedAt:new Date().toISOString()};
 }
 
+const observationStations={"yeolhwa": {"id": "258", "name": "보성군", "lat": 34.76335, "lon": 127.21226, "distanceKm": 2.2, "sido": "1200000000"}, "hyanggyo": {"id": "732", "name": "보성", "lat": 34.76192, "lon": 127.09209, "distanceKm": 1.1, "sido": "1200000000"}, "songsan": {"id": "767", "name": "포두", "lat": 34.58853, "lon": 127.39745, "distanceKm": 4.2, "sido": "1200000000"}, "sacho": {"id": "785", "name": "북일", "lat": 34.46383, "lon": 126.6763, "distanceKm": 5.5, "sido": "1200000000"}};
+
+async function fetchObservations(){
+ const url='https://www.weather.go.kr/w/observation/land/aws-obs-data.do?db=MINDB_01M&tm=&stnId=0&sidoCode=1200000000&sort=&config=';
+ let data;
+ try{
+  const res=await fetch(url,{signal:AbortSignal.timeout(10000)});
+  if(!res.ok)throw fail(`관측자료 제공기관 HTTP ${res.status} 오류입니다.`);
+  data=await res.json();
+ }catch(e){throw e.status?e:fail('관측자료 연결이 지연되거나 응답을 읽지 못했습니다.');}
+ if(!Array.isArray(data.items))throw fail('관측자료 형식을 확인할 수 없습니다.');
+ const today=new Date(Date.now()+32400000).toISOString().slice(0,10).replaceAll('-','');
+ const observations={};
+ for(const [place,station] of Object.entries(observationStations)){
+  const row=data.items.find(r=>String(r.awsStnId)===station.id);
+  const tm=String(row?.tm||''),validTime=/^\d{12}$/.test(tm);
+  const at=validTime?`${tm.slice(0,4)}-${tm.slice(4,6)}-${tm.slice(6,8)}T${tm.slice(8,10)}:${tm.slice(10,12)}:00+09:00`:null;
+  const valid=at&&Number.isFinite(Date.parse(at))&&Date.parse(at)<=Date.now()+300000;
+  const n=numberOrNull(row?.awsPcpDay);
+  const sameDay=valid&&tm.slice(0,8)===today;
+  // Missing values and yesterday's totals are never represented as today's zero.
+  const rain=sameDay&&n!==null&&n>=0?n:null;
+  observations[place]={station,observedAt:valid?at:null,rain,delayed:!valid||Date.now()-Date.parse(at)>1800000,
+   message:!row?'관측자료 확인 불가':!sameDay?'오늘 관측자료 확인 불가':rain===null?'일강수량 확인 불가':'',
+   sourceUrl:'https://www.weather.go.kr/w/observation/land/aws-obs.do'};
+ }
+ return {observations,fetchedAt:new Date().toISOString()};
+}
+
 // Coalesce identical cache misses within this Worker instance.
 const pendingUpstream=new Map();
 async function shared(key,task){
@@ -219,9 +248,22 @@ export default {
     if(request.method==='OPTIONS'){headers['Access-Control-Allow-Methods']='GET, OPTIONS';return new Response(null,{status:204,headers});}
     if(request.method!=='GET')return respond({message:'GET 요청만 지원합니다.'},405);
     const url=new URL(request.url);
-    if(url.pathname==='/api/health')return respond({ok:true,version:'0.6.1',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/health')return respond({ok:true,version:'0.6.2',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+
+    if(url.pathname==='/api/observation'){
+      const place=url.searchParams.get('place');
+      if(!Object.hasOwn(observationStations,place))return respond({message:'관측 장소를 확인해 주세요.'},400);
+      try{
+        const day=new Date(Date.now()+32400000).toISOString().slice(0,10);
+        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/observations-v1/${day}`);
+        const hit=cache?await cache.match(key):null;
+        const data=hit?await hit.json():await shared(key.url,fetchObservations);
+        if(!hit&&cache&&ctx?.waitUntil)ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':'public, max-age=300'}})));
+        return respond({...data.observations[place],fetchedAt:data.fetchedAt});
+      }catch(e){return respond({station:observationStations[place],message:e.status?e.message:'관측자료 확인 불가'},e.status||502);}
+    }
     if(url.pathname==='/api/tide'){
-      if(url.searchParams.has('start'))return respond({message:'물때 화면 파일도 v0.6.1로 업데이트한 뒤 새로고침해 주세요.',code:'TIDE_VERSION'},409);
+      if(url.searchParams.has('start'))return respond({message:'물때 화면 파일도 v0.6.2로 업데이트한 뒤 새로고침해 주세요.',code:'TIDE_VERSION'},409);
       const dateKey=url.searchParams.get('date'),date=tideDate(dateKey),today=tideDate(new Date(Date.now()+32400000).toISOString().slice(0,10).replaceAll('-',''));
       const offset=date?(+date-today)/86400000:null;
       if(offset===null||offset< -1||offset>9)return respond({message:'조회할 물때 날짜를 확인해 주세요.'},400);

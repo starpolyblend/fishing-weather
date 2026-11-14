@@ -1,4 +1,4 @@
-import {esc} from './daily.js?v=0.6.1';
+import {esc} from './daily.js?v=0.6.2';
 const names={'한물':'1물','두물':'2물','세물':'3물','네물':'4물','다섯물':'5물','여섯물':'6물','일곱물':'7물','여덟물':'8물','아홉물':'9물','열물':'10물','열한물':'11물','열두물':'12물','열셋물':'13물','열세물':'13물','열넷물':'14물','열네물':'14물','조금':'조금'};
 const todayKey=()=>new Date(Date.now()+32400000).toISOString().slice(0,10).replaceAll('-','');
 function offset(date,n){const d=new Date(`${date.slice(0,4)}-${date.slice(4,6)}-${date.slice(6,8)}T12:00:00+09:00`);return new Date(+d+n*86400000+32400000).toISOString().slice(0,10).replaceAll('-','')}
