@@ -145,39 +145,60 @@ async function fetchMid(env,region){
  throw fail('아직 중기예보 자료가 제공되지 않았습니다.');
 }
 
-// KHOA Smart Tide Forecast public website data. Not the keyed data.go.kr API.
+// Authorized public-data gateway, not the Smart Tide website's internal endpoint.
 const tideStation={id:'SO_0757',name:'안남리',lat:34.730278,lng:127.264444};
 function tideDate(value){
  if(!/^\d{8}$/.test(value||''))return null;
  const d=new Date(`${value.slice(0,4)}-${value.slice(4,6)}-${value.slice(6,8)}T00:00:00+09:00`);
  return Number.isFinite(+d)&&new Date(+d+32400000).toISOString().slice(0,10).replaceAll('-','')===value?d:null;
 }
-function normalizeTideWeek(json,start){
- const raw=Array.isArray(json.weeklyData)?json.weeklyData:json.getWeeklyData?.weeklyData;
- if(!Array.isArray(raw))throw fail('물때 자료 형식이 변경되었습니다. 공식 자료를 확인해 주세요.');
- const days=new Map(),first=+tideDate(start);
- for(const r of raw){
-  const date=String(r.searchDate||'').replaceAll('-',''),d=tideDate(date);
-  if(!d||+d<first||+d>=first+7*86400000)continue;
-  if(r.obsPostName!==tideStation.name||Math.abs(Number(r.obsLat)-tideStation.lat)>.02||Math.abs(Number(r.obsLon)-tideStation.lng)>.02||!Number.isFinite(Number(r.obsLat))||!Number.isFinite(Number(r.obsLon)))throw fail('물때 예보지점이 일치하지 않습니다.');
-  const events=[];
-  if(r.flgView==='Y')for(const key of ['lvl1','lvl2','lvl3','lvl4']){
-   const [time,type,,rawHeight]=String(r[key]||'').split('/');
-   if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)||!['high','low'].includes(type))continue;
-   const height=/^-?\d+(\.\d+)?$/.test(rawHeight||'')?Number(rawHeight):null;
-   const at=`${date.slice(0,4)}-${date.slice(4,6)}-${date.slice(6,8)}T${time}:00+09:00`;
-   if(!events.some(e=>e.at===at))events.push({at,time,type,height});
-  }
-  events.sort((a,b)=>a.at.localeCompare(b.at));
-  days.set(date,{date,lunar:/^\d{4}\/\d{1,2}\/\d{1,2}$/.test(r.dateMoon||'')?r.dateMoon:null,mool:String(r.mool8||'').slice(0,16),events});
- }
- return {source:'국립해양조사원 스마트 조석예보',sourceUrl:'https://www.khoa.go.kr/swtc/main.do',station:tideStation,start,days:[...days.values()].sort((a,b)=>a.date.localeCompare(b.date)),fetchedAt:new Date().toISOString()};
+function tideError(message,code='TIDE_UPSTREAM',status=502){const e=fail(message,status);e.code=code;return e}
+function lunarTide(date){
+ try{
+  const fmt=new Intl.DateTimeFormat('ko-KR-u-ca-dangi',{day:'numeric',timeZone:'Asia/Seoul'});
+  if(fmt.resolvedOptions().calendar!=='dangi')return {mool:'',lunar:null};
+  const day=Number(fmt.formatToParts(tideDate(date)).find(p=>p.type==='day')?.value);
+  if(!Number.isInteger(day)||day<1||day>30)return {mool:'',lunar:null};
+  const n=(day+6)%15+1;return {mool:n===15?'조금':`${n}물`,lunar:`음력 ${day}일`};
+ }catch{return {mool:'',lunar:null}}
 }
-async function fetchTideWeek(start){
- const res=await fetch('https://www.khoa.go.kr/swtc/getWeeklyData.do',{method:'POST',body:new URLSearchParams({stDate:start,obsPostId:tideStation.id}),signal:AbortSignal.timeout(12000)});
- if(!res.ok)throw fail('국립해양조사원 응답이 지연됩니다. 잠시 후 다시 확인해 주세요.');
- let json;try{json=await res.json()}catch{throw fail('물때 자료를 읽지 못했습니다. 공식 자료를 확인해 주세요.')}
- return normalizeTideWeek(json,start);
+function normalizeTideApi(json,date){
+ const root=json.response||json,code=String(root.header?.resultCode??'');
+ if(['03','3','NODATA_ERROR'].includes(code))return {date,...lunarTide(date),events:[]};
+ if(code&&!['00','0','0000','NORMAL_SERVICE'].includes(code)){
+  if(['20','21','30','31','32','SERVICE_ACCESS_DENIED_ERROR','SERVICE_KEY_IS_NOT_REGISTERED_ERROR','DEADLINE_HAS_EXPIRED_ERROR'].includes(code))throw tideError('조석예보 API 인증 또는 활용승인을 확인해 주세요. Cloudflare KHOA_SERVICE_KEY 설정도 확인해 주세요.','TIDE_AUTH',403);
+  if(['22','23','LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR','LIMITED_NUMBER_OF_SERVICE_REQUESTS_PER_SECOND_EXCEEDS_ERROR'].includes(code))throw tideError('조석예보 API 호출 한도에 도달했습니다. 잠시 후 다시 확인해 주세요.','TIDE_LIMIT',429);
+  throw tideError(`조석예보 API 오류 (${/^[A-Z0-9_]{1,64}$/.test(code)?code:'응답 오류'}).`);
+ }
+ if(!root.body||typeof root.body!=='object')throw tideError('조석예보 API 응답 형식을 확인할 수 없습니다.','TIDE_FORMAT');
+ const raw=root.body.items?.item,items=Array.isArray(raw)?raw:raw&&typeof raw==='object'?[raw]:[];
+ if(!items.length&&Number(root.body.totalCount)>0)throw tideError('조석예보 API 항목 형식이 변경되었습니다.','TIDE_FORMAT');
+ const events=[];
+ for(const item of items){
+  const match=String(item.predcDt||'').match(/^(\d{4})-(\d{2})-(\d{2})[ T]([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?(?:\+09:00)?$/),kind=Number(item.extrSe);
+  if(!match||match[1]+match[2]+match[3]!==date||![1,2,3,4].includes(kind))throw tideError('조석예보 날짜·시각·고저조 형식이 일치하지 않습니다.','TIDE_FORMAT');
+  const time=`${match[4]}:${match[5]}`,at=`${match[1]}-${match[2]}-${match[3]}T${time}:00+09:00`;
+  const value=item.predcTdlvVl,height=value===null||value===undefined||String(value).trim()===''?null:numberOrNull(value);
+  if(!events.some(e=>e.at===at))events.push({at,time,type:kind%2===1?'high':'low',height});
+ }
+ events.sort((a,b)=>a.at.localeCompare(b.at));
+ return {date,...lunarTide(date),events};
+}
+async function fetchTideApi(date,env){
+ const key=env.KHOA_SERVICE_KEY||((env.KMA_PROVIDER||'data-go-kr')==='data-go-kr'?env.KMA_SERVICE_KEY:'');
+ if(!key)throw tideError('Cloudflare에 KHOA_SERVICE_KEY를 비밀 변수로 등록해 주세요.','TIDE_AUTH',503);
+ const url=new URL('https://apis.data.go.kr/1192136/tideFcstHghLw/GetTideFcstHghLwApiService');
+ Object.entries({serviceKey:decodedKey(key),obsCode:tideStation.id,reqDate:date,pageNo:1,numOfRows:300,type:'json'}).forEach(([k,v])=>url.searchParams.set(k,v));
+ let res;try{res=await fetch(url,{signal:AbortSignal.timeout(12000)})}catch{throw tideError('조석예보 API 연결 시간이 초과되었습니다. 잠시 후 새로고침해 주세요.','TIDE_TIMEOUT',504)}
+ const text=await res.text();
+ // Some gateway authentication errors arrive as XML, even with type=json.
+ const xmlCode=text.match(/<returnReasonCode>\s*([^<]+)\s*<\/returnReasonCode>/)?.[1]?.trim();
+ if(res.status===401||res.status===403||['20','21','30','31','32'].includes(xmlCode))throw tideError('조석예보 API 인증 또는 활용승인을 확인해 주세요. KHOA_SERVICE_KEY가 없으면 기존 기상청 키를 사용합니다.','TIDE_AUTH',403);
+ if(res.status===429||['22','23'].includes(xmlCode))throw tideError('조석예보 API 호출 한도에 도달했습니다. 잠시 후 다시 확인해 주세요.','TIDE_LIMIT',429);
+ if(!res.ok)throw tideError(`조석예보 API가 HTTP ${res.status} 오류를 반환했습니다.`);
+ let json;try{json=JSON.parse(text)}catch{throw tideError('조석예보 API에서 JSON 자료를 받지 못했습니다. 인증키와 활용승인을 확인해 주세요.','TIDE_FORMAT')}
+ const day=normalizeTideApi(json,date);
+ return {source:'국립해양조사원 조석예보(고·저조) OpenAPI',sourceUrl:'https://www.data.go.kr/data/15156018/openapi.do',station:tideStation,date,days:[day],fetchedAt:new Date().toISOString()};
 }
 
 // Coalesce identical cache misses within this Worker instance.
@@ -198,19 +219,21 @@ export default {
     if(request.method==='OPTIONS'){headers['Access-Control-Allow-Methods']='GET, OPTIONS';return new Response(null,{status:204,headers});}
     if(request.method!=='GET')return respond({message:'GET 요청만 지원합니다.'},405);
     const url=new URL(request.url);
-    if(url.pathname==='/api/health')return respond({ok:true,version:'0.6.0',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/health')return respond({ok:true,version:'0.6.1',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
     if(url.pathname==='/api/tide'){
-      const start=url.searchParams.get('start'),date=tideDate(start),today=tideDate(new Date(Date.now()+32400000).toISOString().slice(0,10).replaceAll('-',''));
+      if(url.searchParams.has('start'))return respond({message:'물때 화면 파일도 v0.6.1로 업데이트한 뒤 새로고침해 주세요.',code:'TIDE_VERSION'},409);
+      const dateKey=url.searchParams.get('date'),date=tideDate(dateKey),today=tideDate(new Date(Date.now()+32400000).toISOString().slice(0,10).replaceAll('-',''));
       const offset=date?(+date-today)/86400000:null;
-      if(offset!==-1&&offset!==6)return respond({message:'조회할 물때 날짜를 확인해 주세요.'},400);
+      if(offset===null||offset< -1||offset>9)return respond({message:'조회할 물때 날짜를 확인해 주세요.'},400);
       try{
-        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/tide-v1/${tideStation.id}/${start}`);
+        if(!env.KHOA_SERVICE_KEY&&!env.KMA_SERVICE_KEY)throw tideError('Cloudflare에 KHOA_SERVICE_KEY를 비밀 변수로 등록해 주세요.','TIDE_AUTH',503);
+        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/tide-api-v2/${tideStation.id}/${dateKey}`);
         const hit=cache?await cache.match(key):null;if(hit){headers['X-Data-Cache']='hit';return respond(await hit.json())}
         headers['X-Data-Cache']='miss';
-        const data=await shared(key.url,()=>fetchTideWeek(start));
-        if(cache&&ctx?.waitUntil&&data.days.length===7&&data.days.every(d=>d.events.length))ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':'public, max-age=21600'}})));
+        const data=await shared(key.url,()=>fetchTideApi(dateKey,env));
+        if(cache&&ctx?.waitUntil&&data.days[0].events.length)ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':'public, max-age=21600'}})));
         return respond(data);
-      }catch(e){return respond({message:e.status?e.message:'물때 자료를 불러오지 못했습니다. 잠시 후 새로고침해 주세요.'},e.status||502);}
+      }catch(e){return respond({message:e.status?e.message:'물때 자료를 불러오지 못했습니다.',code:e.code||'TIDE_UPSTREAM'},e.status||502);}
     }
     if(url.pathname==='/api/mid'){
       const region=url.searchParams.get('region');

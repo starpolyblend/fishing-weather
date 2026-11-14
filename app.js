@@ -1,9 +1,9 @@
-import {createTideView} from './tides.js?v=0.6.0';
-import {windArrow,windSpeed} from './wind.js?v=0.6.0';
-import {waterChart,bindWaterCharts} from './water-chart.js?v=0.6.0';
-import {dayOffset,grid,kstDate} from './core.js?v=0.6.0';
-import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.6.0';
-import {weatherLabel} from './core.js?v=0.6.0';
+import {createTideView} from './tides.js?v=0.6.1';
+import {windArrow,windSpeed} from './wind.js?v=0.6.1';
+import {waterChart,bindWaterCharts} from './water-chart.js?v=0.6.1';
+import {dayOffset,grid,kstDate} from './core.js?v=0.6.1';
+import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.6.1';
+import {weatherLabel} from './core.js?v=0.6.1';
 const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),demo=new URLSearchParams(location.search).get('demo')==='1';
 const places=(cfg.locations||[]).slice(0,4),memory=new Map(),midMemory=new Map();let saved;
 try{saved=localStorage.getItem('fishing-place')}catch{}
@@ -57,7 +57,7 @@ async function jsonRequest(path,params){
  const base=new URL(cfg.apiBase);if(base.protocol!=='https:')throw Error('연결 주소를 확인해 주세요.');
  const url=new URL(path,base);Object.entries(params).forEach(([k,v])=>url.searchParams.set(k,v));const key=url.href;
  if(pendingRequests.has(key))return pendingRequests.get(key);
- const pending=(async()=>{try{const res=await fetch(url,{signal:AbortSignal.timeout(25000),cache:'no-store'});const data=await res.json();if(!res.ok)throw Error(data.message||'예보를 가져오지 못했습니다.');return data}catch(e){if(e.name==='TimeoutError')throw Error('제공기관 응답이 지연됩니다. 잠시 후 새로고침해 주세요.');throw e}})();
+ const pending=(async()=>{try{const res=await fetch(url,{signal:AbortSignal.timeout(25000),cache:'no-store'});const data=await res.json();if(!res.ok){const error=Error(data.message||'예보를 가져오지 못했습니다.');error.code=data.code;throw error}return data}catch(e){if(e.name==='TimeoutError')throw Error('제공기관 응답이 지연됩니다. 잠시 후 새로고침해 주세요.');throw e}})();
  pendingRequests.set(key,pending);try{return await pending}finally{pendingRequests.delete(key)}
 }
 async function load(force=false){
