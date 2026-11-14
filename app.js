@@ -1,8 +1,8 @@
-import {windArrow,windSpeed} from './wind.js?v=0.4.2';
-import {waterChart,bindWaterCharts} from './water-chart.js?v=0.4.2';
-import {dayOffset,grid,kstDate} from './core.js?v=0.4.2';
-import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.4.2';
-import {weatherLabel} from './core.js?v=0.4.2';
+import {windArrow,windSpeed} from './wind.js?v=0.4.3';
+import {waterChart,bindWaterCharts} from './water-chart.js?v=0.4.3';
+import {dayOffset,grid,kstDate} from './core.js?v=0.4.3';
+import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.4.3';
+import {weatherLabel} from './core.js?v=0.4.3';
 const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),demo=new URLSearchParams(location.search).get('demo')==='1';
 const places=(cfg.locations||[]).slice(0,4),memory=new Map(),midMemory=new Map();let saved;
 try{saved=localStorage.getItem('fishing-place')}catch{}
