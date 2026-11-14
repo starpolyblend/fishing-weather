@@ -68,17 +68,31 @@ function parseWater(html,station,now=new Date()){
  const latest=parse(rows[0]),end=Date.parse(latest.observedAt),samples=new Map();
  for(const row of rows){try{const point=parse(row),t=Date.parse(point.observedAt);if(t<=end&&t>=end-86400000&&!samples.has(t))samples.set(t,point)}catch{/* A malformed row remains a gap, never an invented value. */}}
  const history=[...samples.values()].sort((a,b)=>Date.parse(a.observedAt)-Date.parse(b.observedAt));
- return {...latest,history};
+ const datumRow=rows.find(r=>/^-?\d+(\.\d+)?$/.test(r[1])&&/^-?\d+(\.\d+)?$/.test(r[3]));
+ const gaugeDatum=datumRow?Number(datumRow[3])-Number(datumRow[1]):null;
+ return {...latest,history,gaugeDatum};
+}
+async function fetchOfficialChart(id){
+ const end=new Date(),start=new Date(+end-86400000),params=new URLSearchParams({wlobscd:id});
+ // Official page uses e for the earlier date, s for the later date.
+ for(const [prefix,date] of [['e',start],['s',end]]){const k=new Date(+date+32400000),v=[k.getUTCFullYear(),k.getUTCMonth()+1,k.getUTCDate(),k.getUTCHours(),Math.floor(k.getUTCMinutes()/10)*10];['year','mon','day','hour','min'].forEach((part,i)=>params.set('sel_'+prefix+part,String(v[i]).padStart(2,'0')))}
+ const res=await fetch('https://www.yeongsanriver.go.kr/sumun/wlChart.do',{method:'POST',body:params,signal:AbortSignal.timeout(8000)});if(!res.ok)throw Error('chart');
+ const rows=await res.json();if(!Array.isArray(rows)||!rows.length)throw Error('chart');
+ const num=v=>v!==null&&v!==undefined&&String(v).trim()!==''&&Number.isFinite(Number(v))?Number(v):null;
+ const thresholds=[['attList','관심','#46bd0a'],['wrnList','주의','#fde700'],['almList','경계','#fc8200'],['srsList','심각','#d21d25']].flatMap(([key,name,color])=>{const value=rows.map(r=>num(r[key])).find(v=>v!==null&&v!==0);return value===undefined?[]:[{name,color,value}]});
+ const section=rows.filter(r=>num(r.xVar)!==null&&num(r.yVar)!==null).map(r=>({x:num(r.xVar),y:num(r.yVar)}));
+ return {thresholds,section};
 }
 async function fetchWater(){
  const stations=await Promise.all(waterStations.map(async station=>{
   const sourceUrl=`https://www.yeongsanriver.go.kr/sumun/waterDetail.do?wlobscd=${station.id}`;
   const base={id:station.id,name:station.name,unit:station.unit,datum:station.datum,sourceUrl};
   try{
+   const chartPromise=fetchOfficialChart(station.id).catch(()=>null);
    const res=await fetch(sourceUrl,{signal:AbortSignal.timeout(10000)});
    if(!res.ok)throw new Error('upstream');
    const parsed=parseWater(await res.text(),station);
-   return {...base,...parsed,...(parsed.level===null?{error:'해당 시각의 수위가 제공되지 않았습니다.'}:{})};
+   return {...base,...parsed,officialChart:await chartPromise,...(parsed.level===null?{error:'해당 시각의 수위가 제공되지 않았습니다.'}:{})};
   }catch{return {...base,level:null,observedAt:null,history:[],error:'공개 관측자료를 읽지 못했습니다. 공식 자료를 확인해 주세요.'};}
  }));
  return {source:'영산강홍수통제소 공개 수위자료',fetchedAt:new Date().toISOString(),stations};
@@ -137,7 +151,7 @@ export default {
     if(request.method==='OPTIONS'){headers['Access-Control-Allow-Methods']='GET, OPTIONS';return new Response(null,{status:204,headers});}
     if(request.method!=='GET')return respond({message:'GET 요청만 지원합니다.'},405);
     const url=new URL(request.url);
-    if(url.pathname==='/api/health')return respond({ok:true,version:'0.4.0',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/health')return respond({ok:true,version:'0.4.1',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
     if(url.pathname==='/api/mid'){
       const region=url.searchParams.get('region');
       if(!Object.hasOwn(midRegions,region))return respond({message:'중기예보 지역을 확인해 주세요.'},400);
@@ -151,7 +165,7 @@ export default {
     }
     if(url.pathname==='/api/water'){
       try{
-        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/water-v2`);
+        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/water-v3`);
         const hit=cache?await cache.match(key):null;if(hit)return respond(await hit.json());
         const data=await fetchWater();
         if(cache&&ctx?.waitUntil&&data.stations.every(s=>s.level!==null))ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':'public, max-age=300'}})));

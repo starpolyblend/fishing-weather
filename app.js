@@ -1,8 +1,8 @@
-import {windArrow,windSpeed} from './wind.js?v=0.4.0';
-import {waterChart,bindWaterCharts} from './water-chart.js?v=0.4.0';
-import {dayOffset,grid,kstDate} from './core.js?v=0.4.0';
-import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.4.0';
-import {weatherLabel} from './core.js?v=0.4.0';
+import {windArrow,windSpeed} from './wind.js?v=0.4.1';
+import {waterChart,bindWaterCharts} from './water-chart.js?v=0.4.1';
+import {dayOffset,grid,kstDate} from './core.js?v=0.4.1';
+import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.4.1';
+import {weatherLabel} from './core.js?v=0.4.1';
 const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),demo=new URLSearchParams(location.search).get('demo')==='1';
 const places=(cfg.locations||[]).slice(0,4),memory=new Map(),midMemory=new Map();let saved;
 try{saved=localStorage.getItem('fishing-place')}catch{}
@@ -77,7 +77,7 @@ $('#water-places').onclick=e=>{const b=e.target.closest('[data-water]');if(!b)re
 function renderWater(){
  const s=waterData?.stations.find(s=>s.id===waterSelection);if(!s){$('#water-content').innerHTML=empty('수위 자료가 없습니다.','잠시 후 새로고침해 주세요.');return}
  const old=s.observedAt&&Date.now()-Date.parse(s.observedAt)>3600000;
- $('#water-content').innerHTML=`<section class="water-station"><h3>${esc(s.name)}</h3><p class="water-level">${typeof s.level==='number'?esc(s.level.toFixed(2)):'확인 불가'}<small>${s.level==null?'':esc(s.unit)}</small></p><p>${esc(s.datum)}</p><p class="${old?'notice':'muted'}">${waterTime(s.observedAt)} 관측${old?' · 자료 지연':''}</p>${s.error?`<p>${esc(s.error)}</p>`:''}${waterChart(s)}<a href="${esc(s.sourceUrl)}" target="_blank" rel="noopener">공식 관측자료 ↗</a></section><p class="meta">가장교는 수위표수위, 보성강댐은 해발수위입니다.<br>수심이 아니며 관측소별 그래프 세로축 범위가 다릅니다.<br>공개 관측자료는 미검정 자료로 수정될 수 있습니다.</p>`;
+ $('#water-content').innerHTML=`<section class="water-station"><h3>${esc(s.name)}</h3><p class="water-level">${typeof s.level==='number'?esc(s.level.toFixed(2)):'확인 불가'}<small>${s.level==null?'':esc(s.unit)}</small></p><p>${esc(s.datum)}</p><p class="${old?'notice':'muted'}">${waterTime(s.observedAt)} 관측${old?' · 자료 지연':''}</p>${s.error?`<p>${esc(s.error)}</p>`:''}${waterChart(s)}<a href="${esc(s.sourceUrl)}" target="_blank" rel="noopener">홍수통제소 원본 그래프 ↗</a></section><p class="meta">가장교는 수위표수위, 보성강댐은 해발수위입니다.<br>수심이 아니며 축은 홍수통제소 기준 명칭이며 관측소별 범위가 다릅니다.<br>공개 관측자료는 미검정 자료로 수정될 수 있습니다.</p>`;
  bindWaterCharts([s]);
 }
 async function loadWater(force=false){
