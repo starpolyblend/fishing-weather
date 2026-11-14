@@ -9,10 +9,10 @@ function numberOrNull(v){if(v==null||String(v).trim()==='')return null;const n=N
 function forecasts(items){
   const rows=new Map();for(const it of items){if(!/^\d{8}$/.test(it.fcstDate)||!/^\d{4}$/.test(it.fcstTime))continue;
     const key=it.fcstDate+it.fcstTime;if(!rows.has(key))rows.set(key,{date:it.fcstDate,time:it.fcstTime});const r=rows.get(key),v=it.fcstValue;
-    const fields={TMP:'temp',POP:'pop',WSD:'wind',PTY:'pty',SKY:'sky'};if(fields[it.category])r[fields[it.category]]=numberOrNull(v);
+    const fields={TMN:'tmin',TMX:'tmax',TMP:'temp',POP:'pop',WSD:'wind',PTY:'pty',SKY:'sky'};if(fields[it.category])r[fields[it.category]]=numberOrNull(v);
     if(it.category==='PCP')r.rain=(v==null||String(v).trim()===''||String(v)==='-999')?null:String(v);
   }
-  return [...rows.values()].filter(r=>'temp'in r||'pop'in r||'wind'in r||'rain'in r).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+  return [...rows.values()].filter(r=>'temp'in r||'pop'in r||'wind'in r||'rain'in r||'tmin'in r||'tmax'in r).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
 }
 function decodedKey(key){const k=key.trim();try{return /%[0-9a-f]{2}/i.test(k)?decodeURIComponent(k):k}catch{return k}}
 function fail(message,status=502){const e=new Error(message);e.status=status;return e;}
@@ -75,6 +75,49 @@ async function fetchWater(){
  return {source:'영산강홍수통제소 공개 수위자료',fetchedAt:new Date().toISOString(),stations};
 }
 
+
+// 중기육상: 광주·전남(11F20000), 중기기온: 보성/고흥/강진.
+const midRegions={boseong:'11F20404',goheung:'11F20403',gangjin:'11F20303'};
+function midIssueTimes(now=new Date()){
+ const t=new Date(now.getTime()+9*3600000-15*60000);
+ t.setUTCHours(t.getUTCHours()>=18?18:t.getUTCHours()>=6?6:-6,0,0,0);
+ return [0,1].map(i=>new Date(+t-i*43200000).toISOString().slice(0,16).replace(/[-T:]/g,''));
+}
+function normalizeMid(land,temps,issue){
+ const base=new Date(`${issue.slice(0,4)}-${issue.slice(4,6)}-${issue.slice(6,8)}T00:00:00+09:00`);
+ return Array.from({length:8},(_,n)=>{
+  const i=n+3,allDay=i>=8&&!land[`wf${i}Am`];
+  const parts=(allDay?['']:['Am','Pm']).map(suffix=>({weather:land[`wf${i}${suffix}`]||null,pop:numberOrNull(land[`rnSt${i}${suffix}`])}));
+  return {date:new Date(+base+i*86400000+9*3600000).toISOString().slice(0,10).replaceAll('-',''),min:numberOrNull(temps[`taMin${i}`]),max:numberOrNull(temps[`taMax${i}`]),allDay,parts};
+ }).filter(d=>d.min!==null||d.max!==null||d.parts.some(p=>p.weather||p.pop!==null));
+}
+async function fetchMid(env,region){
+ if((env.KMA_PROVIDER||'data-go-kr')!=='data-go-kr')throw fail('중기예보는 공공데이터포털 연결 설정이 필요합니다.',503);
+ const key=env.KMA_MID_SERVICE_KEY||env.KMA_SERVICE_KEY;
+ if(!key)throw fail('중기예보 인증키 설정을 확인해 주세요.',503);
+ for(const issue of midIssueTimes()){
+  const get=async(method,regId)=>{
+   const url=new URL(`https://apis.data.go.kr/1360000/MidFcstInfoService/${method}`);
+   Object.entries({serviceKey:decodedKey(key),pageNo:1,numOfRows:10,dataType:'JSON',regId,tmFc:issue}).forEach(([k,v])=>url.searchParams.set(k,v));
+   let res;try{res=await fetch(url,{signal:AbortSignal.timeout(8000)})}catch{throw fail('중기예보 연결이 지연됩니다. 잠시 후 다시 확인해 주세요.');}
+   if(!res.ok)throw fail('중기예보 연결을 확인해 주세요. 해당 서비스 활용신청이 필요할 수 있습니다.');
+   let body;try{body=await res.json()}catch{throw fail('중기예보 인증키와 중기예보 조회서비스 활용신청 상태를 확인해 주세요.');}
+   const response=body?.response,code=String(response?.header?.resultCode??'');
+   if(['03','3'].includes(code))return null;
+   if(!['00','0'].includes(code))throw fail('중기예보 조회서비스 활용신청 또는 인증키 상태를 확인해 주세요.');
+   const raw=response?.body?.items?.item,item=Array.isArray(raw)?raw[0]:raw;
+   if(!item||typeof item!=='object')return null;
+   if((item.regId||item.regid)&&String(item.regId||item.regid)!==regId)throw fail('중기예보 지역이 일치하지 않습니다.');
+   return item;
+  };
+  const [land,temps]=await Promise.all([get('getMidLandFcst','11F20000'),get('getMidTa',midRegions[region])]);
+  if(!land||!temps)continue;
+  const days=normalizeMid(land,temps,issue);if(!days.length)continue;
+  return {source:'기상청 중기예보',region,landRegion:'광주·전남',issuedAt:`${issue.slice(0,4)}-${issue.slice(4,6)}-${issue.slice(6,8)}T${issue.slice(8,10)}:00:00+09:00`,fetchedAt:new Date().toISOString(),days};
+ }
+ throw fail('아직 중기예보 자료가 제공되지 않았습니다.');
+}
+
 export default {
   async fetch(request,env,ctx){
     const origin=request.headers.get('Origin')||'',allowed=(env.ALLOWED_ORIGINS||'').split(',').map(s=>s.trim()).filter(Boolean);
@@ -85,7 +128,18 @@ export default {
     if(request.method==='OPTIONS'){headers['Access-Control-Allow-Methods']='GET, OPTIONS';return new Response(null,{status:204,headers});}
     if(request.method!=='GET')return respond({message:'GET 요청만 지원합니다.'},405);
     const url=new URL(request.url);
-    if(url.pathname==='/api/health')return respond({ok:true,version:'0.2.0',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/health')return respond({ok:true,version:'0.3.0',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/mid'){
+      const region=url.searchParams.get('region');
+      if(!Object.hasOwn(midRegions,region))return respond({message:'중기예보 지역을 확인해 주세요.'},400);
+      try{
+        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/mid-v1/${region}/${midIssueTimes()[0]}`);
+        const hit=cache?await cache.match(key):null;if(hit)return respond(await hit.json());
+        const data=await fetchMid(env,region);
+        if(cache&&ctx?.waitUntil)ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':'public, max-age=1800'}})));
+        return respond(data);
+      }catch(e){return respond({message:e.status?e.message:'중기예보를 불러오지 못했습니다.'},e.status||502);}
+    }
     if(url.pathname==='/api/water'){
       try{
         const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/water-v1`);
@@ -101,7 +155,7 @@ export default {
     if(!Number.isInteger(nx)||!Number.isInteger(ny)||nx<1||nx>149||ny<1||ny>253)return respond({message:'예보 위치를 확인해 주세요.'},400);
     // 선택사항: 예: 57,34;58,34. 등록한 격자 외 호출을 차단합니다.
     if(env.ALLOWED_GRIDS&&!env.ALLOWED_GRIDS.split(';').map(s=>s.trim()).includes(`${nx},${ny}`))return respond({message:'등록된 예보 위치가 아닙니다.'},400);
-    const key=new Request(`${url.origin}/cache/weather-v1/${env.KMA_PROVIDER||'data-go-kr'}/${nx}/${ny}`);
+    const key=new Request(`${url.origin}/cache/weather-v2/${env.KMA_PROVIDER||'data-go-kr'}/${nx}/${ny}`);
     try{
       const cache=globalThis.caches?.default;
       const cached=cache?await cache.match(key):null;
@@ -112,4 +166,4 @@ export default {
     }catch(e){return respond({message:e.status?e.message:'자료를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'},e.status||502);}
   }
 };
-export {issueTimes,forecasts,decodedKey,parseWater,waterStations};
+export {issueTimes,forecasts,decodedKey,parseWater,waterStations,midIssueTimes,normalizeMid};

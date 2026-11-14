@@ -24,6 +24,8 @@ export function forecasts(items) {
     const key=it.fcstDate+it.fcstTime;
     if(!rows.has(key))rows.set(key,{date:it.fcstDate,time:it.fcstTime});
     const r=rows.get(key), v=it.fcstValue;
+    if(it.category==='TMN')r.tmin=numberOrNull(v);
+    if(it.category==='TMX')r.tmax=numberOrNull(v);
     if(it.category==='TMP')r.temp=numberOrNull(v);
     if(it.category==='POP')r.pop=numberOrNull(v);
     if(it.category==='WSD')r.wind=numberOrNull(v);
@@ -31,7 +33,7 @@ export function forecasts(items) {
     if(it.category==='SKY')r.sky=numberOrNull(v);
     if(it.category==='PCP')r.rain=(v==null||String(v).trim()===''||String(v)==='-999')?null:String(v);
   }
-  return [...rows.values()].filter(r=>'temp'in r||'pop'in r||'wind'in r||'rain'in r).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+  return [...rows.values()].filter(r=>'temp'in r||'pop'in r||'wind'in r||'rain'in r||'tmin'in r||'tmax'in r).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
 }
 export function weatherLabel(row) { return ({1:'비',2:'비 또는 눈',3:'눈',4:'소나기'})[row.pty] || ({1:'맑음',3:'구름 많음',4:'흐림'})[row.sky] || '날씨'; }
 export function rainText(value){if(value==null)return '확인 불가';if(value==='강수없음'||value==='0'||value==='0.0')return '없음';return /mm|㎜/.test(value)?value:value+'mm';}
