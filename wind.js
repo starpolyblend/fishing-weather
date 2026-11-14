@@ -1,4 +1,4 @@
-import {esc,unit} from './daily.js?v=0.4.1';
+import {esc,unit} from './daily.js?v=0.4.2';
 export function windInfo(direction,speed){
  if(speed===0)return {calm:true,label:'무풍',degrees:null};
  if(typeof direction!=='number'||!Number.isFinite(direction)||direction<0||direction>360)return null;
