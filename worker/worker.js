@@ -248,7 +248,7 @@ export default {
     if(request.method==='OPTIONS'){headers['Access-Control-Allow-Methods']='GET, OPTIONS';return new Response(null,{status:204,headers});}
     if(request.method!=='GET')return respond({message:'GET 요청만 지원합니다.'},405);
     const url=new URL(request.url);
-    if(url.pathname==='/api/health')return respond({ok:true,version:'0.6.2',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/health')return respond({ok:true,version:'0.6.4',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
 
     if(url.pathname==='/api/observation'){
       const place=url.searchParams.get('place');
@@ -263,7 +263,7 @@ export default {
       }catch(e){return respond({station:observationStations[place],message:e.status?e.message:'관측자료 확인 불가'},e.status||502);}
     }
     if(url.pathname==='/api/tide'){
-      if(url.searchParams.has('start'))return respond({message:'물때 화면 파일도 v0.6.2로 업데이트한 뒤 새로고침해 주세요.',code:'TIDE_VERSION'},409);
+      if(url.searchParams.has('start'))return respond({message:'물때 화면 파일도 v0.6.4로 업데이트한 뒤 새로고침해 주세요.',code:'TIDE_VERSION'},409);
       const dateKey=url.searchParams.get('date'),date=tideDate(dateKey),today=tideDate(new Date(Date.now()+32400000).toISOString().slice(0,10).replaceAll('-',''));
       const offset=date?(+date-today)/86400000:null;
       if(offset===null||offset< -1||offset>9)return respond({message:'조회할 물때 날짜를 확인해 주세요.'},400);

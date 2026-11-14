@@ -1,4 +1,4 @@
-import {weatherLabel,dayOffset,kstDate} from './core.js?v=0.6.3';
+import {weatherLabel,dayOffset,kstDate} from './core.js?v=0.6.4';
 export const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const valid=v=>typeof v==='number'&&Number.isFinite(v);
 export const unit=(v,u)=>valid(v)?`${v}${u}`:'—';
@@ -20,11 +20,7 @@ export function rainDisplay(raw){
  return /mm|㎜/.test(String(raw))?String(raw).replaceAll('㎜','mm'):String(raw)+'mm';
 }
 export function rainMarkup(raw){const text=rainDisplay(raw);return text.split(' ').map(part=>`<span class="rain-piece">${esc(part)}</span>`).join('<wbr>');}
-function maxRain(rows){
- const all=rows.map(r=>r.rain).filter(v=>v!=null&&v!=='');if(!all.length)return null;
- const score=v=>Math.max(0,...(String(v).match(/\d+(?:\.\d+)?/g)||[]).map(Number));
- return all.reduce((a,b)=>score(b)>score(a)?b:a);
-}
+
 export function buildDays(data,now=new Date()){
  const short=data.rows||[],mid=data.mid?.days||[];
  return Array.from({length:11},(_,i)=>{
@@ -35,7 +31,7 @@ export function buildDays(data,now=new Date()){
    const g=hourly.filter(r=>(Number(r.time.slice(0,2))<12?0:1)===half),fallback=m?.parts?.[m.allDay?0:half];
    const representative=g.find(r=>[1,2,3,4].includes(r.pty))||g.reduce((a,b)=>(b.sky||0)>(a?.sky||0)?b:a,null);
    const pops=g.map(r=>r.pop).filter(valid);
-   return {weather:representative?weatherLabel(representative):fallback?.weather??null,pop:pops.length?Math.max(...pops):fallback?.pop??null,rain:maxRain(g),available:!!g.length||!!fallback};
+   return {weather:representative?weatherLabel(representative):fallback?.weather??null,pop:pops.length?Math.max(...pops):fallback?.pop??null,available:!!g.length||!!fallback};
   });
   return {date,allDay:!hourly.length&&(m?.allDay??i>=8),parts,min:pick('tmin')??m?.min??null,max:pick('tmax')??m?.max??null,hasHours:!!hourly.length};
  });
@@ -43,5 +39,5 @@ export function buildDays(data,now=new Date()){
 export function dailyTable(data,selected,now=new Date()){
  const days=buildDays(data,now),today=kstDate(now).replaceAll('-','');
  const cells=(d,fn)=>d.allDay?`<td colspan="2" class="day-edge">${fn(d.parts[0])}</td>`:d.parts.map((p,i)=>`<td class="${i===0?'day-edge':''}">${fn(p)}</td>`).join('');
- return `<div class="timeline-scroll daily-scroll" tabindex="0" role="region" aria-label="오늘부터 10일 후까지 일별 예보"><table class="forecast-table daily-table"><caption class="sr-only">${esc(data.placeName||'')} 일별 예보. 기온은 하루 최저·최고이며 오전·오후 기온이 아닙니다.</caption><thead><tr><th class="row-label" scope="row">날짜</th>${days.map(d=>`<th colspan="2" class="date-cell${d.date===selected?' selected':''}"><button class="date-button" data-date="${d.date}" aria-pressed="${d.date===selected}" aria-label="${dateText(d.date)} 시간별 예보 보기">${dateText(d.date)}<small>${d.date===today?'오늘':d.date===dayOffset(1,now).replaceAll('-','')?'내일':'\u00a0'}</small></button></th>`).join('')}</tr><tr><th class="row-label" scope="row">시간</th>${days.map(d=>d.allDay?'<th colspan="2" class="day-edge">종일</th>':'<th class="day-edge">오전</th><th>오후</th>').join('')}</tr></thead><tbody><tr><th scope="row" class="row-label">날씨</th>${days.map(d=>cells(d,p=>weatherIcon(p.weather))).join('')}</tr><tr><th scope="row" class="row-label">기온</th>${days.map(d=>`<td class="low day-edge" aria-label="최저 ${unit(d.min,'℃')}">${unit(d.min,'℃')}</td><td class="high" aria-label="최고 ${unit(d.max,'℃')}">${unit(d.max,'℃')}</td>`).join('')}</tr><tr class="daily-probability"><th scope="row" class="row-label">강수확률</th>${days.map(d=>cells(d,p=>unit(p.pop,'%'))).join('')}</tr><tr class="daily-rain"><th scope="row" class="row-label">강수량</th>${days.map(d=>cells(d,p=>rainMarkup(p.rain))).join('')}</tr></tbody></table></div>`;
+ return `<div class="timeline-scroll daily-scroll" tabindex="0" role="region" aria-label="오늘부터 10일 후까지 일별 예보"><table class="forecast-table daily-table"><caption class="sr-only">${esc(data.placeName||'')} 일별 예보. 기온은 하루 최저·최고이며 오전·오후 기온이 아닙니다.</caption><thead><tr><th class="row-label" scope="row">날짜</th>${days.map(d=>`<th colspan="2" class="date-cell${d.date===selected?' selected':''}"><button class="date-button ${dateText(d.date).endswith('(토)')?'saturday':dateText(d.date).endswith('(일)')?'sunday':'weekday'}" data-date="${d.date}" aria-pressed="${d.date===selected}" aria-label="${dateText(d.date)} 시간별 예보 보기">${dateText(d.date)}<small>${d.date===today?'오늘':d.date===dayOffset(1,now).replaceAll('-','')?'내일':'\u00a0'}</small></button></th>`).join('')}</tr><tr><th class="row-label" scope="row">시간</th>${days.map(d=>d.allDay?'<th colspan="2" class="day-edge">종일</th>':'<th class="day-edge">오전</th><th>오후</th>').join('')}</tr></thead><tbody><tr><th scope="row" class="row-label">날씨</th>${days.map(d=>cells(d,p=>weatherIcon(p.weather))).join('')}</tr><tr><th scope="row" class="row-label">기온</th>${days.map(d=>`<td class="low day-edge" aria-label="최저 ${unit(d.min,'℃')}">${unit(d.min,'℃')}</td><td class="high" aria-label="최고 ${unit(d.max,'℃')}">${unit(d.max,'℃')}</td>`).join('')}</tr><tr class="daily-probability"><th scope="row" class="row-label">강수확률</th>${days.map(d=>cells(d,p=>unit(p.pop,'%'))).join('')}</tr></tbody></table></div>`;
 }
