@@ -69,4 +69,5 @@ nav.main-tabs{background:#edf3fa;box-shadow:none}
 .daily-table .date-cell{border-right:1px solid #a8bbd0}
 
 /* v0.6.9: hourly column separators matching the daily table */
-.hourly-table .time-head,.hourly-table tbody td{border-left:1px solid #a8bbd0}
+.hourly-table .time-head{border-left:0}
+.hourly-table tbody td{border-left:1px dotted #a8bbd0}
