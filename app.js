@@ -1,11 +1,12 @@
-import {isNight} from './daylight.js?v=0.6.14';
-import {createObservationView} from './observation.js?v=0.6.14';
-import {createTideView} from './tides.js?v=0.6.14';
-import {windArrow,windSpeed} from './wind.js?v=0.6.14';
-import {waterChart,bindWaterCharts} from './water-chart.js?v=0.6.14';
-import {dayOffset,grid,kstDate} from './core.js?v=0.6.14';
-import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.6.14';
-import {weatherLabel} from './core.js?v=0.6.14';
+import {recordDiagnostic,diagnosticParams} from './diagnostics.js?v=0.7.0';
+import {isNight} from './daylight.js?v=0.7.0';
+import {createObservationView} from './observation.js?v=0.7.0';
+import {createTideView} from './tides.js?v=0.7.0';
+import {windArrow,windSpeed} from './wind.js?v=0.7.0';
+import {waterChart,bindWaterCharts} from './water-chart.js?v=0.7.0';
+import {dayOffset,grid,kstDate} from './core.js?v=0.7.0';
+import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.7.0';
+import {weatherLabel} from './core.js?v=0.7.0';
 const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),demo=new URLSearchParams(location.search).get('demo')==='1';
 const places=(cfg.locations||[]).slice(0,4),memory=new Map(),midMemory=new Map();let saved;
 try{saved=localStorage.getItem('fishing-place')}catch{}
@@ -54,15 +55,24 @@ function renderHours(data){
  scroll.onkeydown=e=>{if(['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();scroll.scrollBy({left:(e.key==='ArrowRight'?1:-1)*step(),behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'})}};
 }
 function sample(){const rows=[];for(let d=0;d<4;d++)for(let h=0;h<24;h++)rows.push({date:dayOffset(d).replaceAll('-',''),time:String(h).padStart(2,'0')+'00',temp:Math.round(13+5*Math.sin((h-6)*Math.PI/18)),tmin:h===6?8:null,tmax:h===15?18:null,pop:h>=12&&h<=17?60:20,rain:h>=12&&h<=17?'1mm 미만':'강수없음',wind:1.9,direction:h*30%360,sky:3,pty:h>=12&&h<=17?1:0});const days=Array.from({length:7},(_,n)=>({date:dayOffset(n+4).replaceAll('-',''),min:7+n,max:16+n,allDay:n+4>=8,parts:[{weather:'맑음',pop:20},{weather:'흐리고 비',pop:40}]}));return {rows,mid:{days,issuedAt:new Date().toISOString()},issuedAt:new Date().toISOString(),grid:{nx:0,ny:0}}}
-const pendingRequests=new Map();
+const pendingRequests=new Map(),failedRequests=new Map();
 async function jsonRequest(path,params){
  const base=new URL(cfg.apiBase);if(base.protocol!=='https:')throw Error('연결 주소를 확인해 주세요.');
  const url=new URL(path,base);Object.entries(params).forEach(([k,v])=>url.searchParams.set(k,v));const key=url.href;
  if(pendingRequests.has(key))return pendingRequests.get(key);
- const pending=(async()=>{try{const res=await fetch(url,{signal:AbortSignal.timeout(25000),cache:'no-store'});const data=await res.json();if(!res.ok){const error=Error(data.message||'예보를 가져오지 못했습니다.');error.code=data.code;throw error}return data}catch(e){if(e.name==='TimeoutError')throw Error('제공기관 응답이 지연됩니다. 잠시 후 새로고침해 주세요.');throw e}})();
+ const failed=failedRequests.get(key);if(failed&&Date.now()<failed.until){recordDiagnostic({path,result:'COOLDOWN'});throw failed.error}
+ const pending=(async()=>{const start=performance.now();let status=0,cache='',worker='',serverTiming='';try{
+  const res=await fetch(url,{signal:AbortSignal.timeout(25000),cache:'no-store'});status=res.status;cache=res.headers.get('X-Data-Cache')||'';worker=res.headers.get('X-App-Version')||'';serverTiming=res.headers.get('Server-Timing')||'';
+  const data=await res.json();if(!res.ok){const error=Error('자료 갱신이 지연됩니다. 잠시 후 다시 확인해 주세요.');error.code=/^[A-Z_]{1,40}$/.test(data.code||'')?data.code:'HTTP_ERROR';throw error}
+  failedRequests.delete(key);recordDiagnostic({path,params:diagnosticParams(params),status,cache,worker,serverTiming,ms:Math.round(performance.now()-start),result:'OK',issuedAt:data.issuedAt,fetchedAt:data.fetchedAt});return data;
+ }catch(e){const error=Error('자료 갱신이 지연됩니다. 잠시 후 다시 확인해 주세요.');error.code=e.code|| (e.name==='TimeoutError'?'TIMEOUT':e instanceof TypeError?'NETWORK_OR_CORS':'INVALID_RESPONSE');
+  failedRequests.set(key,{until:Date.now()+20000,error});if(failedRequests.size>100)failedRequests.delete(failedRequests.keys().next().value);
+  recordDiagnostic({path,params:diagnosticParams(params),status,cache,worker,serverTiming,ms:Math.round(performance.now()-start),result:error.code});throw error;
+ }})();
  pendingRequests.set(key,pending);try{return await pending}finally{pendingRequests.delete(key)}
 }
-const observationView=createObservationView({request:jsonRequest,demo});
+const extremesMemory=new Map();
+const observationView=createObservationView({request:jsonRequest,demo,apiBase:cfg.apiBase});
 async function load(force=false){
  void observationView.load(place?.id,force);
  const ticket=++serial;$('#refresh').disabled=false;
@@ -71,13 +81,22 @@ async function load(force=false){
  let g;try{g=grid(place.lat,place.lng)}catch{$('#weather-content').innerHTML=empty('장소 위치를 확인 중입니다.','위도·경도 설정을 확인해 주세요.');return}
  const region=place.midRegion||({yeolhwa:'boseong',hyanggyo:'boseong',songsan:'goheung',sacho:'gangjin'})[place.id],key=`${g.nx},${g.ny}`;
  const cache=cached(memory,'weather',key,21600000,d=>Array.isArray(d?.rows)),midCache=cached(midMemory,'mid',region,86400000,d=>Array.isArray(d?.days));
- const midPromise=(!force&&midCache&&!midCache.restored&&Date.now()-midCache.at<1800000?Promise.resolve(midCache.data):jsonRequest('/api/mid',{region}).then(d=>{if(!Array.isArray(d.days))throw Error('중기예보 형식을 확인해 주세요.');remember(midMemory,'mid',region,d);return d})).then(d=>({mid:d}),()=>({...(midCache?{mid:midCache.data}:{}),midError:midCache?'중기예보 갱신 실패 · 이전 발표 자료입니다.':'중기예보를 불러오지 못했습니다. 단기예보만 표시합니다.'}));
+ const midPromise=(!force&&midCache&&Date.now()-midCache.at<1800000?Promise.resolve(midCache.data):jsonRequest('/api/mid',{region}).then(d=>{if(!Array.isArray(d.days))throw Error('중기예보 형식을 확인해 주세요.');remember(midMemory,'mid',region,d);return d})).then(d=>({mid:d}),()=>({...(midCache?{mid:midCache.data}:{}),midError:midCache?'중기예보 갱신 실패 · 이전 발표 자료입니다.':'중기예보를 불러오지 못했습니다. 단기예보만 표시합니다.'}));
  $('#refresh').disabled=true;if(cache){render({...cache.data,...(midCache?{mid:midCache.data}:{}),midLoading:!midCache});$('#weather-content').insertAdjacentHTML('afterbegin','<p class="loading-note">예보 업데이트 확인 중…</p>')}else $('#weather-content').innerHTML=empty('날씨를 가져오는 중입니다.','잠시만 기다려 주세요.');
  try{
-  const data=!force&&cache&&!cache.restored&&Date.now()-cache.at<300000?cache.data:await jsonRequest('/api/weather',g);
+  const data=!force&&cache&&Date.now()-cache.at<300000?cache.data:await jsonRequest('/api/weather',g);
   if(!Array.isArray(data.rows))throw Error('날씨 자료 형식을 확인해 주세요.');if(data!==cache?.data)remember(memory,'weather',key,data);
-  if(ticket===serial){render({...data,...(midCache?{mid:midCache.data}:{}),midLoading:!midCache});$('#refresh').disabled=false;}
-  const mid=await midPromise;if(ticket===serial)render({...data,...mid});
+  let display={...data,...(midCache?{mid:midCache.data}:{}),midLoading:!midCache};
+  const paint=()=>{if(ticket===serial){render(display);$('#refresh').disabled=false}};paint();
+  // Supplements never delay the primary forecast; only merge into this exact issue.
+  const extraKey=key,extra=cached(extremesMemory,'extremes',extraKey,300000,d=>d?.issuedAt===data.issuedAt);
+  const today=kstDate().replaceAll('-','');
+  const needExtra=['tmin','tmax'].some(field=>!data.rows.some(r=>r.date===today&&Number.isFinite(r[field])));
+  if(extra){display={...display,...extra.data};paint()}
+  if(needExtra)void (extra&&!force?Promise.resolve(extra.data):jsonRequest('/api/weather-extremes',{...g,issuedAt:data.issuedAt})).then(d=>{
+   if(d.issuedAt!==data.issuedAt)return;remember(extremesMemory,'extremes',extraKey,d);display={...display,...d};paint();
+  }).catch(()=>{});
+  const mid=await midPromise;display={...display,...mid,midLoading:false};paint();
  }catch(e){if(ticket===serial){if(cache){render({...cache.data,...(midCache?{mid:midCache.data}:{})});$('#weather-content').insertAdjacentHTML('afterbegin','<p class="notice">갱신 지연 · 이전 예보 표시 중 (발표 시각 확인)</p>')}else $('#weather-content').innerHTML=empty('날씨를 확인할 수 없습니다.',e.message||'잠시 후 다시 시도해 주세요.')}}
  finally{if(ticket===serial)$('#refresh').disabled=false}
 }
@@ -92,7 +111,7 @@ $('#water-places').onclick=e=>{const b=e.target.closest('[data-water]');if(!b)re
 function renderWater(){
  const s=waterData?.stations.find(s=>s.id===waterSelection);if(!s){$('#water-content').innerHTML=empty('수위 자료가 없습니다.','잠시 후 새로고침해 주세요.');return}
  const old=s.observedAt&&Date.now()-Date.parse(s.observedAt)>3600000;
- $('#water-content').innerHTML=`<section class="water-station"><h3>${esc(s.name)}</h3><p class="water-level">${typeof s.level==='number'?esc(s.level.toFixed(2)):'확인 불가'}<small>${s.level==null?'':esc(s.unit)}</small></p><p>${esc(s.datum)}</p><p class="${old?'notice':'muted'}">${waterTime(s.observedAt)} 관측${old?' · 자료 지연':''}</p>${s.error?`<p>${esc(s.error)}</p>`:''}${waterChart(s)}<a class="water-source-button" href="${esc(s.sourceUrl)}" target="_blank" rel="noopener">홍수통제소 원본 그래프 ↗</a></section><p class="meta">가장교는 수위표수위, 보성강댐은 해발수위입니다.<br>수심이 아니며 축은 홍수통제소 기준 명칭이며 관측소별 범위가 다릅니다.<br>공개 관측자료는 미검정 자료로 수정될 수 있습니다.</p>`;
+ $('#water-content').innerHTML=`<section class="water-station"><h3>${esc(s.name)}</h3><p class="water-level">${typeof s.level==='number'?esc(s.level.toFixed(2)):'확인 불가'}<small>${s.level==null?'':esc(s.unit)}</small></p><p>${esc(s.datum)}</p><p class="${old?'notice':'muted'}">${waterTime(s.observedAt)} 관측${old?' · 자료 지연':''}</p>${s.error?'<p class="notice">수위 갱신 지연</p>':''}${waterChart(s)}<a class="water-source-button" href="${esc(s.sourceUrl)}" target="_blank" rel="noopener">홍수통제소 원본 그래프 ↗</a></section><p class="meta">가장교는 수위표수위, 보성강댐은 해발수위입니다.<br>수심이 아니며 축은 홍수통제소 기준 명칭이며 관측소별 범위가 다릅니다.<br>공개 관측자료는 미검정 자료로 수정될 수 있습니다.</p>`;
  bindWaterCharts([s]);
 }
 async function loadWater(force=false){
@@ -110,15 +129,16 @@ async function loadWater(force=false){
  if(demo){$('#water-content').innerHTML=empty('수위 예시는 제공하지 않습니다.','실제 정보 화면에서 확인해 주세요.');$('#water-refresh').disabled=false;return}
  // This task never holds up the level/history response.
  const chartTask=async()=>{
-  if(!force&&chartCache&&!chartCache.restored&&Date.now()-chartCache.at<1800000){chartLoading=false;paint();return}
+  if(!force&&chartCache&&Date.now()-chartCache.at<1800000){chartLoading=false;paint();return}
   chartLoading=true;
   try{const d=await jsonRequest('/api/water-chart',{station:id});if(d.station!==id||!d.officialChart)throw Error('chart');remember(chartMemory,'chart',id,d);chart=d.officialChart}
   catch{chartFailed=true}finally{chartLoading=false;paint()}
  };
  void chartTask();
  try{
-  const s=!force&&cache&&!cache.restored&&Date.now()-cache.at<300000?cache.data:(await jsonRequest('/api/water',{station:id})).stations?.find(s=>s.id===id);
+  const s=!force&&cache&&Date.now()-cache.at<300000?cache.data:(await jsonRequest('/api/water',{station:id})).stations?.find(s=>s.id===id);
   if(!s||!Array.isArray(s.history))throw Error('수위 자료 형식을 확인해 주세요. Worker를 최신 버전으로 배포했는지 확인해 주세요.');
+  if(s.level===null)recordDiagnostic({path:'/api/water',params:{station:id},result:'PARTIAL_DATA'});
   if(s.level===null&&cache){level=cache.data;levelNotice='최신 수위 확인 실패 · 이전 관측자료입니다.'}
   else{level=s;levelNotice='';if(s.level!==null&&s!==cache?.data)remember(waterMemory,'water',id,s)}
   paint();

@@ -83,3 +83,5 @@ nav.main-tabs{background:#edf3fa;box-shadow:none}
 .daily-table td,.daily-table th:not(.row-label){width:auto;min-width:0;max-width:none}
 .daily-table thead .date-cell{border-right:0;border-left:1px solid #a8bbd0}
 .daily-table .day-edge{border-left:1px solid #a8bbd0}
+
+#connection-diagnostics{margin-top:14px;font-size:12px;color:#64748b}#connection-diagnostics summary{cursor:pointer}#diagnostic-output{max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;font-size:11px}#connection-diagnostics button{font-size:12px;padding:8px 12px}
