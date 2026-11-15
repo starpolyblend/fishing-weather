@@ -48,13 +48,14 @@ async function fetchForecast(env,nx,ny){
 }
 
 
-// Preserve the latest forecast; supplement only today's missing official TMN.
-async function supplementTodayMinimum(data,env,nx,ny,origin,ctx,now=new Date()){
+// Preserve current hourly data; supplement only missing official daily extrema.
+async function supplementTodayTemperature(data,env,nx,ny,origin,ctx,category,now=new Date()){
+ const field=category==='TMN'?'tmin':'tmax',output=category==='TMN'?'dailyMinimumSupplement':'dailyMaximumSupplement';
  const today=new Date(+now+32400000).toISOString().slice(0,10).replaceAll('-','');
- if(data.rows.some(r=>r.date===today&&Number.isFinite(r.tmin)))return data;
+ if(data.rows.some(r=>r.date===today&&Number.isFinite(r[field])))return data;
  const provider=env.KMA_PROVIDER||'data-go-kr';
  const cache=globalThis.caches?.default;
- const key=new Request(`${origin}/cache/today-minimum-v1/${provider}/${nx}/${ny}/${today}`);
+ const key=new Request(`${origin}/cache/today-temperature-v2/${category}/${provider}/${nx}/${ny}/${today}`);
  let value;
  try{
   const hit=cache?await cache.match(key):null;
@@ -62,7 +63,11 @@ async function supplementTodayMinimum(data,env,nx,ny,origin,ctx,now=new Date()){
   if(!value){
    value=await shared(key.url,async()=>{
     const yesterday=new Date(+new Date(`${today.slice(0,4)}-${today.slice(4,6)}-${today.slice(6,8)}T00:00:00+09:00`)-86400000+32400000).toISOString().slice(0,10).replaceAll('-','');
-    const candidates=[{date:today,time:'0200'},{date:yesterday,time:'2300'}];
+    const times=category==='TMN'?['0200']:['1100','0200'];
+    const candidates=[...times.map(time=>({date:today,time})),{date:yesterday,time:'2300'}].filter(issue=>{
+     const at=`${issue.date.slice(0,4)}-${issue.date.slice(4,6)}-${issue.date.slice(6,8)}T${issue.time.slice(0,2)}:00:00+09:00`;
+     return Date.parse(at)<Date.parse(data.issuedAt);
+    }).slice(0,2);
     for(const issue of candidates){
      const issuedAt=`${issue.date.slice(0,4)}-${issue.date.slice(4,6)}-${issue.date.slice(6,8)}T${issue.time.slice(0,2)}:00:00+09:00`;
      if(Date.parse(issuedAt)>=Date.parse(data.issuedAt))continue;
@@ -76,7 +81,7 @@ async function supplementTodayMinimum(data,env,nx,ny,origin,ctx,now=new Date()){
       const json=await response.json(),result=json?.response;
       if(!['00','0'].includes(String(result?.header?.resultCode)))continue;
       const raw=result?.body?.items?.item,items=Array.isArray(raw)?raw:raw?[raw]:[];
-      const item=items.find(i=>i.category==='TMN'&&i.fcstDate===today&&numberOrNull(i.fcstValue)!==null);
+      const item=items.find(i=>i.category===category&&i.fcstDate===today&&numberOrNull(i.fcstValue)!==null);
       if(item)return {date:today,value:numberOrNull(item.fcstValue),issuedAt};
      }catch{/* Supplemental failure must not discard the current forecast. */}
     }
@@ -85,8 +90,15 @@ async function supplementTodayMinimum(data,env,nx,ny,origin,ctx,now=new Date()){
    if(value&&cache&&ctx?.waitUntil)ctx.waitUntil(cache.put(key,new Response(JSON.stringify(value),{headers:{'Cache-Control':'public, max-age=21600'}})));
   }
  }catch{/* Cache or supplemental request failure leaves the main forecast usable. */}
- if(value?.date===today&&Number.isFinite(value.value)&&Date.parse(value.issuedAt)<Date.parse(data.issuedAt))return {...data,dailyMinimumSupplement:value};
+ if(value?.date===today&&Number.isFinite(value.value)&&Date.parse(value.issuedAt)<Date.parse(data.issuedAt))return {...data,[output]:value};
  return data;
+}
+
+async function supplementTodayExtremes(data,env,nx,ny,origin,ctx,now=new Date()){
+ const results=await Promise.all(['TMN','TMX'].map(category=>supplementTodayTemperature(data,env,nx,ny,origin,ctx,category,now)));
+ const result={...data};
+ for(const entry of results)for(const key of ['dailyMinimumSupplement','dailyMaximumSupplement'])if(entry[key])result[key]=entry[key];
+ return result;
 }
 
 const waterStations=[
@@ -307,7 +319,7 @@ export default {
     if(request.method==='OPTIONS'){headers['Access-Control-Allow-Methods']='GET, OPTIONS';return new Response(null,{status:204,headers});}
     if(request.method!=='GET')return respond({message:'GET 요청만 지원합니다.'},405);
     const url=new URL(request.url);
-    if(url.pathname==='/api/health')return respond({ok:true,version:'0.6.8',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/health')return respond({ok:true,version:'0.6.14',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
 
 
     if(url.pathname==='/api/observation-yesterday'){
@@ -378,12 +390,12 @@ export default {
     if(!Number.isInteger(nx)||!Number.isInteger(ny)||nx<1||nx>149||ny<1||ny>253)return respond({message:'예보 위치를 확인해 주세요.'},400);
     // 선택사항: 예: 57,34;58,34. 등록한 격자 외 호출을 차단합니다.
     if(env.ALLOWED_GRIDS&&!env.ALLOWED_GRIDS.split(';').map(s=>s.trim()).includes(`${nx},${ny}`))return respond({message:'등록된 예보 위치가 아닙니다.'},400);
-    const key=new Request(`${url.origin}/cache/weather-v5/${env.KMA_PROVIDER||'data-go-kr'}/${nx}/${ny}`);
+    const key=new Request(`${url.origin}/cache/weather-v6/${env.KMA_PROVIDER||'data-go-kr'}/${nx}/${ny}`);
     try{
       const cache=globalThis.caches?.default;
       const cached=cache?await cache.match(key):null;
       if(cached)return respond(await cached.json());
-      const data=await shared(key.url,async()=>supplementTodayMinimum(await fetchForecast(env,nx,ny),env,nx,ny,url.origin,ctx));
+      const data=await shared(key.url,async()=>supplementTodayExtremes(await fetchForecast(env,nx,ny),env,nx,ny,url.origin,ctx));
       if(cache&&ctx?.waitUntil)ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Content-Type':'application/json','Cache-Control':'public, max-age=300'}})));
       return respond(data);
     }catch(e){return respond({message:e.status?e.message:'자료를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'},e.status||502);}

@@ -1,4 +1,4 @@
-import {weatherLabel,dayOffset,kstDate} from './core.js?v=0.6.12';
+import {weatherLabel,dayOffset,kstDate} from './core.js?v=0.6.14';
 export const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const valid=v=>typeof v==='number'&&Number.isFinite(v);
 export const unit=(v,u)=>valid(v)?`${v}${u}`:'—';
@@ -33,7 +33,7 @@ export function buildDays(data,now=new Date()){
    const pops=g.map(r=>r.pop).filter(valid);
    return {weather:representative?weatherLabel(representative):fallback?.weather??null,pop:pops.length?Math.max(...pops):fallback?.pop??null,available:!!g.length||!!fallback};
   });
-  return {date,allDay:!hourly.length&&(m?.allDay??i>=8),parts,min:pick('tmin')??(data.dailyMinimumSupplement?.date===date?data.dailyMinimumSupplement.value:null)??m?.min??null,max:pick('tmax')??m?.max??null,hasHours:!!hourly.length};
+  return {date,allDay:!hourly.length&&(m?.allDay??i>=8),parts,min:pick('tmin')??(data.dailyMinimumSupplement?.date===date?data.dailyMinimumSupplement.value:null)??m?.min??null,max:pick('tmax')??(data.dailyMaximumSupplement?.date===date?data.dailyMaximumSupplement.value:null)??m?.max??null,hasHours:!!hourly.length};
  });
 }
 export function dailyTable(data,selected,now=new Date()){
