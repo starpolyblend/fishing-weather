@@ -57,3 +57,13 @@ nav.main-tabs{background:#edf3fa;box-shadow:none}
 .tide-table tbody tr:nth-child(even){background:#f6f9fd}
 .tide-table tbody tr.tide-today{background:#eaf3ff}
 .tide-table tbody th{vertical-align:middle}
+
+/* v0.6.8: restrained forecast typography and smaller weather symbols */
+.yesterday-rain{font-size:14px;font-weight:400;color:#586c80;line-height:1.5;margin:2px 0}
+.forecast-table{font-size:15px}
+.daily-table .date-button,.hourly-table .time-head strong{font-size:15px}
+.forecast-table th,.forecast-table td,.forecast-table strong,.forecast-table button,.daily-table .low,.daily-table .high,.daily-probability td,.hourly-table .temperature td,.forecast-table .time-head span,.forecast-table .row-label,.forecast-table thead th{font-weight:400}
+.daily-table .date-button[aria-pressed=true]{font-weight:700}
+.daily-table .weather-icon,.hourly-table .weather-icon{width:29px;height:29px}
+.daily-table .day-edge{border-left:1px solid #a8bbd0}
+.daily-table .date-cell{border-right:1px solid #a8bbd0}

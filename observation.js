@@ -1,22 +1,42 @@
-import {esc} from './daily.js?v=0.6.7';
+import {esc} from './daily.js?v=0.6.8';
 export function createObservationView({request,demo}){
- const holder=document.querySelector('#observation'),memory=new Map();let serial=0;
+ const holder=document.querySelector('#observation'),memory=new Map();let serial=0,currentPlace='';const yesterdayMemory=new Map();
  const names={yeolhwa:'보성군',hyanggyo:'보성',songsan:'포두',sacho:'북일'};
  const today=()=>new Date(Date.now()+32400000).toISOString().slice(0,10);
+ const yesterday=()=>new Date(Date.now()+32400000-86400000).toISOString().slice(0,10).replaceAll('-','');
+ function paintYesterday(){
+  const el=holder.querySelector('.yesterday-rain');if(!el)return;
+  const entry=yesterdayMemory.get(currentPlace),d=entry?.data;
+  const text=d?.date===yesterday()?(Number.isFinite(d.rain)?`${d.rain}mm`:d.rainDash?'-':'확인 불가'):'확인 중…';
+  el.textContent=`어제 누적 강수량 ${text}`;
+ }
+ async function loadYesterday(place,force,ticket){
+  const entry=yesterdayMemory.get(place);
+  if(!force&&entry?.data.date===yesterday()&&Date.now()-entry.at<3600000){paintYesterday();return}
+  try{
+   const data=await request('/api/observation-yesterday',{place});
+   if(data.date!==yesterday())throw Error('date');
+   yesterdayMemory.set(place,{data,at:Number.isFinite(data.rain)||data.rainDash?Date.now():0});
+  }catch{
+   yesterdayMemory.set(place,{data:{date:yesterday(),rain:null},at:0});
+  }
+  if(ticket===serial)paintYesterday();
+ }
  function paint(data,note=''){
   const sameDay=data?.observedAt?.slice(0,10)===today();
   const rain=sameDay&&Number.isFinite(data?.rain)?`${data.rain}mm`:sameDay&&data?.rainDash?'-':'확인 불가';
   const name=data?.station?.name||'가까운 관측지점';
   const time=data?.observedAt?new Intl.DateTimeFormat('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Seoul'}).format(new Date(data.observedAt)):'';
   const delayed=data?.observedAt&&Date.now()-Date.parse(data.observedAt)>1800000;
-  holder.innerHTML=`<div class="observation-line"><span>${esc(name)} 관측</span><span>오늘 누적 강수량 <strong>${rain}</strong></span></div><p class="observation-meta">${esc([time?`${time} 기준`:'',delayed?'자료 지연':'',note||data?.message||''].filter(Boolean).join(' · '))}</p>`;
+  holder.innerHTML=`<div class="observation-line"><span>${esc(name)} 관측</span><span>오늘 누적 강수량 <strong>${rain}</strong></span></div><p class="yesterday-rain"></p><p class="observation-meta">${esc([time?`${time} 기준`:'',delayed?'자료 지연':'',note||data?.message||''].filter(Boolean).join(' · '))}</p>`;paintYesterday();
  }
  async function load(place,force=false){
-  const ticket=++serial;
+  const ticket=++serial;currentPlace=place;
   if(demo){holder.textContent='관측자료는 실제 정보 화면에서 확인하세요.';return}
+  void loadYesterday(place,force,ticket);
   const cached=memory.get(place);
   const usable=cached&&cached.data.observedAt?.slice(0,10)===today()&&Date.now()-cached.at<1800000;
-  if(usable)paint(cached.data);else holder.innerHTML=`<p class="observation-meta">${esc(names[place]||'관측지점')} 관측 · 오늘 누적 강수량 확인 중…</p>`;
+  if(usable)paint(cached.data);else holder.innerHTML=`<p class="observation-meta">${esc(names[place]||'관측지점')} 관측 · 오늘 누적 강수량 확인 중…</p><p class="yesterday-rain"></p>`;paintYesterday();
   if(!force&&usable&&Date.now()-cached.at<300000)return;
   try{
    const data=await request('/api/observation',{place});

@@ -1,11 +1,11 @@
-import {isNight} from './daylight.js?v=0.6.7';
-import {createObservationView} from './observation.js?v=0.6.7';
-import {createTideView} from './tides.js?v=0.6.7';
-import {windArrow,windSpeed} from './wind.js?v=0.6.7';
-import {waterChart,bindWaterCharts} from './water-chart.js?v=0.6.7';
-import {dayOffset,grid,kstDate} from './core.js?v=0.6.7';
-import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.6.7';
-import {weatherLabel} from './core.js?v=0.6.7';
+import {isNight} from './daylight.js?v=0.6.8';
+import {createObservationView} from './observation.js?v=0.6.8';
+import {createTideView} from './tides.js?v=0.6.8';
+import {windArrow,windSpeed} from './wind.js?v=0.6.8';
+import {waterChart,bindWaterCharts} from './water-chart.js?v=0.6.8';
+import {dayOffset,grid,kstDate} from './core.js?v=0.6.8';
+import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.6.8';
+import {weatherLabel} from './core.js?v=0.6.8';
 const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),demo=new URLSearchParams(location.search).get('demo')==='1';
 const places=(cfg.locations||[]).slice(0,4),memory=new Map(),midMemory=new Map();let saved;
 try{saved=localStorage.getItem('fishing-place')}catch{}
@@ -47,7 +47,7 @@ function renderHours(data){
  const rows=data.rows.filter(r=>r.date===selectedDate&&(r.date!==today||r.time>=hour)&&(r.temp!=null||r.sky!=null||r.pty!=null)).sort((a,b)=>a.time.localeCompare(b.time));
  if(!rows.length){$('#hourly-content').innerHTML=empty(`${dateText(selectedDate)} 시간별 예보 없음`,'시간별 예보가 제공되는 날짜를 선택해 주세요.');return}
  const fields=[['날씨',r=>weatherIcon(weatherLabel(r),isNight(r.date,r.time,place.lat,place.lng)),'condition'],['기온',r=>unit(r.temp,'℃'),'temperature'],['강수확률',r=>unit(r.pop,'%'),'probability'],['강수량',r=>rainMarkup(r.rain),'rainfall'],['풍향',r=>windArrow(r),'direction'],['풍속',r=>windSpeed(r),'wind']];
- $('#hourly-content').innerHTML=`<div id="timeline-scroll" class="timeline-scroll" tabindex="0" role="region" aria-label="시간별 예보, 좌우로 스크롤"><table class="forecast-table hourly-table"><caption class="sr-only">${esc(place.name)} ${dateText(selectedDate)} 시간별 예보</caption><thead><tr><th scope="col" class="row-label">날짜<br>시간</th>${rows.map(r=>`<th scope="col" class="time-head"><span>${dateText(r.date,false)}</span><strong>${r.time.slice(0,2)}시</strong></th>`).join('')}</tr></thead><tbody>${fields.map(([label,get,cls])=>`<tr class="${cls}"><th scope="row" class="row-label">${label}</th>${rows.map(r=>`<td>${get(r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div><p class="meta compact">화살표는 바람이 향하는 쪽 · 북풍 ↓<br>강수량은 1시간 예상량 · 옆으로 밀어보세요 →</p>`;
+ $('#hourly-content').innerHTML=`<div id="timeline-scroll" class="timeline-scroll" tabindex="0" role="region" aria-label="시간별 예보, 좌우로 스크롤"><table class="forecast-table hourly-table"><caption class="sr-only">${esc(place.name)} ${dateText(selectedDate)} 시간별 예보</caption><thead><tr><th scope="col" class="row-label">날짜<br>시간</th>${rows.map(r=>`<th scope="col" class="time-head"><span>${Number(r.date.slice(6,8))}일</span><strong>${r.time.slice(0,2)}시</strong></th>`).join('')}</tr></thead><tbody>${fields.map(([label,get,cls])=>`<tr class="${cls}"><th scope="row" class="row-label">${label}</th>${rows.map(r=>`<td>${get(r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div><p class="meta compact">화살표는 바람이 향하는 쪽 · 북풍 ↓<br>강수량은 1시간 예상량 · 옆으로 밀어보세요 →</p>`;
  const scroll=$('#timeline-scroll'),step=()=>scroll.querySelector('.time-head').getBoundingClientRect().width||64;
  scroll.scrollLeft=hourScroll;
  scroll.addEventListener('scroll',()=>{hourScroll=scroll.scrollLeft},{passive:true});

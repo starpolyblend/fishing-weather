@@ -273,6 +273,22 @@ async function fetchObservations(){
  return {observations,fetchedAt:new Date().toISOString()};
 }
 
+
+async function fetchYesterdayObservations(date){
+ const url=new URL('https://www.weather.go.kr/w/observation/land/aws-obs-data.do');
+ Object.entries({db:'DAYDB',tm:`${date.slice(0,4)}.${date.slice(4,6)}.${date.slice(6,8)} 00:00`,stnId:0,sidoCode:'1200000000',sort:'',config:''}).forEach(([k,v])=>url.searchParams.set(k,v));
+ const res=await fetch(url,{signal:AbortSignal.timeout(10000)});
+ if(!res.ok)throw fail('어제 관측자료 확인 불가');
+ const data=await res.json();
+ if(String(data.dataTm)!==date||!Array.isArray(data.items))throw fail('어제 관측자료 날짜 확인 불가');
+ const observations={};
+ for(const [place,station] of Object.entries(observationStations)){
+  const row=data.items.find(r=>String(r.awsStnId)===station.id&&String(r.tm)===date);
+  const n=numberOrNull(row?.awsPcpDay);
+  observations[place]={date,rain:n!==null&&n>=0?n:null,rainDash:String(row?.awsPcpDay??'').trim()==='-'};
+ }
+ return {observations};
+}
 // Coalesce identical cache misses within this Worker instance.
 const pendingUpstream=new Map();
 async function shared(key,task){
@@ -291,8 +307,21 @@ export default {
     if(request.method==='OPTIONS'){headers['Access-Control-Allow-Methods']='GET, OPTIONS';return new Response(null,{status:204,headers});}
     if(request.method!=='GET')return respond({message:'GET 요청만 지원합니다.'},405);
     const url=new URL(request.url);
-    if(url.pathname==='/api/health')return respond({ok:true,version:'0.6.6',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/health')return respond({ok:true,version:'0.6.8',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
 
+
+    if(url.pathname==='/api/observation-yesterday'){
+      const place=url.searchParams.get('place');
+      if(!Object.hasOwn(observationStations,place))return respond({message:'관측 장소를 확인해 주세요.'},400);
+      const date=new Date(Date.now()+32400000-86400000).toISOString().slice(0,10).replaceAll('-','');
+      try{
+        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/yesterday-observation-v1/${date}`);
+        const hit=cache?await cache.match(key):null;
+        const data=hit?await hit.json():await shared(key.url,()=>fetchYesterdayObservations(date));
+        if(!hit&&cache&&ctx?.waitUntil&&Object.values(data.observations).every(d=>d.rain!==null||d.rainDash))ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':'public, max-age=3600'}})));
+        return respond(data.observations[place]);
+      }catch{return respond({date,message:'어제 관측자료 확인 불가'},502);}
+    }
     if(url.pathname==='/api/observation'){
       const place=url.searchParams.get('place');
       if(!Object.hasOwn(observationStations,place))return respond({message:'관측 장소를 확인해 주세요.'},400);
@@ -306,7 +335,7 @@ export default {
       }catch(e){return respond({station:observationStations[place],message:e.status?e.message:'관측자료 확인 불가'},e.status||502);}
     }
     if(url.pathname==='/api/tide'){
-      if(url.searchParams.has('start'))return respond({message:'물때 화면 파일도 v0.6.6로 업데이트한 뒤 새로고침해 주세요.',code:'TIDE_VERSION'},409);
+      if(url.searchParams.has('start'))return respond({message:'물때 화면 파일도 v0.6.8로 업데이트한 뒤 새로고침해 주세요.',code:'TIDE_VERSION'},409);
       const dateKey=url.searchParams.get('date'),date=tideDate(dateKey),today=tideDate(new Date(Date.now()+32400000).toISOString().slice(0,10).replaceAll('-',''));
       const offset=date?(+date-today)/86400000:null;
       if(offset===null||offset< -1||offset>9)return respond({message:'조회할 물때 날짜를 확인해 주세요.'},400);
