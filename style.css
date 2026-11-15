@@ -77,3 +77,9 @@ nav.main-tabs{background:#edf3fa;box-shadow:none}
 .update-button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;min-width:64px;min-height:48px;padding:4px 6px;border:1px solid #bfd3eb;border-radius:9px;background:#edf5ff;color:#1557a0;font-size:12px;line-height:1.25;white-space:nowrap}
 .update-button svg{width:27px;height:27px}
 @media(max-width:360px){.title-row h1{font-size:24px}.header-actions{gap:2px}}
+
+/* v0.6.12: one shared column grid and consistent leading date borders */
+.daily-table{table-layout:fixed}
+.daily-table td,.daily-table th:not(.row-label){width:auto;min-width:0;max-width:none}
+.daily-table thead .date-cell{border-right:0;border-left:1px solid #a8bbd0}
+.daily-table .day-edge{border-left:1px solid #a8bbd0}
