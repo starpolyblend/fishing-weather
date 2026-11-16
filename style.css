@@ -85,3 +85,15 @@ nav.main-tabs{background:#edf3fa;box-shadow:none}
 .daily-table .day-edge{border-left:1px solid #a8bbd0}
 
 #connection-diagnostics{margin-top:14px;font-size:12px;color:#64748b}#connection-diagnostics summary{cursor:pointer}#diagnostic-output{max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;font-size:11px}#connection-diagnostics button{font-size:12px;padding:8px 12px}
+
+/* v0.7.1: compact station summary, refresh shares the heading row. */
+#water .water-toolbar{float:right;position:relative;z-index:1;margin:0 0 0 8px}
+#water .water-toolbar .refresh{min-height:44px;padding:4px 0}
+#water .water-station{padding-top:0}
+#water .water-station-title{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 8px;min-height:44px;padding:7px 0 3px;font-size:22px;line-height:1.3}
+#water .water-station-title small{font-size:14px;font-weight:400;color:#627386;white-space:nowrap}
+#water .water-level{clear:both;font-size:34px;line-height:1.2;margin:2px 0}
+#water .water-level small{font-size:17px;margin-left:5px}
+#water .water-observed{font-size:13px;line-height:1.35;margin:3px 0 2px}
+#water .water-chart{margin-top:8px}
+#water::after{content:"";display:block;clear:both}
