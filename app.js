@@ -1,16 +1,16 @@
-import {recordDiagnostic,diagnosticParams} from './diagnostics.js?v=0.7.4';
-import {isNight} from './daylight.js?v=0.7.4';
-import {createObservationView} from './observation.js?v=0.7.4';
-import {createTideView} from './tides.js?v=0.7.4';
-import {windArrow,windSpeed} from './wind.js?v=0.7.4';
-import {waterChart,bindWaterCharts} from './water-chart.js?v=0.7.4';
-import {dayOffset,grid,kstDate} from './core.js?v=0.7.4';
-import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.7.4';
-import {weatherLabel} from './core.js?v=0.7.4';
+import {createWaterPrefetch} from './water-prefetch.js?v=0.7.8';
+import {recordDiagnostic,diagnosticParams} from './diagnostics.js?v=0.7.8';
+import {isNight} from './daylight.js?v=0.7.8';
+import {createObservationView} from './observation.js?v=0.7.8';
+import {createTideView} from './tides.js?v=0.7.8';
+import {windArrow,windSpeed} from './wind.js?v=0.7.8';
+import {waterChart,bindWaterCharts} from './water-chart.js?v=0.7.8';
+import {dayOffset,grid,kstDate} from './core.js?v=0.7.8';
+import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.7.8';
+import {weatherLabel} from './core.js?v=0.7.8';
 const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),demo=new URLSearchParams(location.search).get('demo')==='1';
-const places=(cfg.locations||[]).slice(0,4),memory=new Map(),midMemory=new Map();let saved;
-try{saved=localStorage.getItem('fishing-place')}catch{}
-let place=places.find(p=>p.id===saved)||places[0],serial=0,selectedDate=kstDate().replaceAll('-',''),activeData=null,hourScroll=0;
+const places=(cfg.locations||[]).slice(0,4),memory=new Map(),midMemory=new Map();
+let place=places.find(p=>p.id==='yeolhwa')||places[0],serial=0,selectedDate=kstDate().replaceAll('-',''),activeData=null,hourScroll=0;
 function diskKey(kind,key){return `fishing-cache-v3:${cfg.apiBase}:${kind}:${key}`}
 function cached(map,kind,key,maxAge,valid){
  if(map.has(key)){const c=map.get(key),age=Date.now()-c.at;if(age>=0&&age<maxAge&&valid(c.data))return c;map.delete(key)}
@@ -88,7 +88,7 @@ async function load(force=false){
   const data=!force&&cache&&Date.now()-cache.at<300000?cache.data:await jsonRequest('/api/weather',g);
   if(!Array.isArray(data.rows))throw Error('날씨 자료 형식을 확인해 주세요.');if(data!==cache?.data)remember(memory,'weather',key,data);
   let display={...data,...(midCache?{mid:midCache.data}:{}),midLoading:!midCache};
-  const paint=()=>{if(ticket===serial){render(display);$('#refresh').disabled=false}};paint();
+  const paint=()=>{if(ticket===serial){render(display);$('#refresh').disabled=false}};paint();scheduleWaterPrefetch();
   // Supplements never delay the primary forecast; only merge into this exact issue.
   const extraKey=key,extra=cached(extremesMemory,'extremes',extraKey,300000,d=>d?.issuedAt===data.issuedAt);
   const today=kstDate().replaceAll('-','');
@@ -99,10 +99,21 @@ async function load(force=false){
   }).catch(()=>{});
   const mid=await midPromise;display={...display,...mid,midLoading:false};paint();
  }catch(e){const mid=await midPromise;if(ticket===serial){if(cache){render({...cache.data,...mid,midLoading:false});$('#weather-content').insertAdjacentHTML('afterbegin','<p class="notice">갱신 지연 · 이전 예보 표시 중 (발표 시각 확인)</p>')}else if(mid.mid){render({rows:[],...mid,midLoading:false});$('#weather-content').insertAdjacentHTML('afterbegin','<p class="notice">단기예보 갱신 지연 · 중기예보 표시 중</p>')}else $('#weather-content').innerHTML=empty('날씨를 확인할 수 없습니다.',e.message||'잠시 후 다시 시도해 주세요.')}}
- finally{if(ticket===serial)$('#refresh').disabled=false}
+ finally{if(ticket===serial)$('#refresh').disabled=false;scheduleWaterPrefetch()}
 }
 const waterMemory=new Map(),chartMemory=new Map();let waterData=null,waterSerial=0,waterSelection='4007630';
 try{const saved=localStorage.getItem('fishing-water-station');if(['4007630','4007625'].includes(saved))waterSelection=saved}catch{}
+const prefetchWater=createWaterPrefetch({
+ request:jsonRequest,
+ read:(kind,id,age)=>{
+  const c=cached(kind==='water'?waterMemory:chartMemory,kind,id,kind==='water'?3600000:86400000,
+   d=>kind==='water'?d?.id===id&&Number.isFinite(d.level)&&Array.isArray(d.history):d?.station===id&&!!d.officialChart);
+  return c&&Date.now()-c.at<age?c:null;
+ },
+ save:(kind,id,data)=>remember(kind==='water'?waterMemory:chartMemory,kind,id,data),
+ enabled:()=>!demo&&!!cfg.apiBase&&!document.hidden
+});
+function scheduleWaterPrefetch(){prefetchWater.start()}
 const waterTime=t=>t?new Intl.DateTimeFormat('ko-KR',{month:'numeric',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:'Asia/Seoul'}).format(new Date(t)):'관측 시각 없음';
 function renderWaterButtons(){
  $('#water-places').innerHTML=[['4007625','보성강댐'],['4007630','가장교']].map(([id,name])=>`<button data-water="${id}" aria-pressed="${id===waterSelection}">${name}</button>`).join('');
