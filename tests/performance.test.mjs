@@ -33,3 +33,12 @@ test('concurrent invocations do not share live upstream promises',async t=>{
  const a=worker.fetch(req,env,h.ctx),b=worker.fetch(req,env,h.ctx);await new Promise(r=>setImmediate(r));release();
  const result=await Promise.all([a,b]);assert.ok(result.every(r=>r.status===200));assert.equal(calls,2);await h.flush();
 });
+test('incomplete observation batches expire after a minute; complete batches keep five minutes',async t=>{
+ const h=harness(t);let complete=false;
+ globalThis.fetch=async()=>{const tm=new Date(Date.now()+32400000).toISOString().slice(0,16).replace(/[-T:]/g,'');return new Response(JSON.stringify({items:(complete?['258','732','767','785']:['258']).map(awsStnId=>({awsStnId,tm,awsPcpDay:'0'}))}))};
+ for(const mode of [false,true]){complete=mode;const r=await worker.fetch(new Request(`https://observations-${mode}/api/observation?place=all`),{},h.ctx);assert.equal(r.status,200);await h.flush();const saved=[...h.store.entries()].find(([k])=>k.includes(`observations-${mode}`))[1];assert.equal(saved.headers.get('Cache-Control'),`public, max-age=${mode?300:60}`)}
+});
+test('server cooldown exposes remaining duration rather than a new twenty seconds',async t=>{
+ const h=harness(t),oldNow=Date.now;let now=oldNow();Date.now=()=>now;t.after(()=>Date.now=oldNow);globalThis.fetch=async()=>new Response('unavailable',{status:503});
+ const req=new Request('https://remaining-cooldown/api/water?station=4007630');const first=await worker.fetch(req,{},h.ctx);assert.equal((await first.json()).retryAfterMs,20000);now+=17000;const second=await worker.fetch(req,{},h.ctx);assert.equal((await second.json()).retryAfterMs,3000);
+});

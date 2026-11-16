@@ -1,4 +1,4 @@
-import {esc} from './daily.js?v=0.7.3';
+import {esc} from './daily.js?v=0.7.4';
 const names={'한물':'1물','두물':'2물','세물':'3물','네물':'4물','다섯물':'5물','여섯물':'6물','일곱물':'7물','여덟물':'8물','아홉물':'9물','열물':'10물','열한물':'11물','열두물':'12물','열셋물':'13물','열세물':'13물','열넷물':'14물','열네물':'14물','조금':'조금'};
 const todayKey=()=>new Date(Date.now()+32400000).toISOString().slice(0,10).replaceAll('-','');
 function offset(date,n){const d=new Date(`${date.slice(0,4)}-${date.slice(4,6)}-${date.slice(6,8)}T12:00:00+09:00`);return new Date(+d+n*86400000+32400000).toISOString().slice(0,10).replaceAll('-','')}
@@ -26,7 +26,7 @@ export function createTideView({request,apiBase,demo}){
   const entries=starts.map((start,i)=>{
    let entry=memory.get(start);
    if(!entry)try{const stored=JSON.parse(localStorage.getItem(storageKey(start)));if(stored?.data?.date===start&&stored.data.station?.id==='SO_0757'&&Array.isArray(stored.data.days))entry={...stored,restored:true}}catch{}
-   if(!entry||!Number.isFinite(entry.at)||Date.now()-entry.at<0||Date.now()-entry.at>=21600000)return null;
+   if(!entry||!Number.isFinite(entry.at)||Date.now()-entry.at<0||Date.now()-entry.at>=172800000)return null;
    records.set(start,entry.data);return entry;
   });
   const render=()=>{
@@ -50,13 +50,13 @@ export function createTideView({request,apiBase,demo}){
   const run=async()=>{
    while(cursor<starts.length&&ticket===serial){
     const i=cursor++,start=starts[i],entry=entries[i];
-    if(!force&&entry){states[i]='done';render();continue}
+    if(!force&&entry&&Date.now()-entry.at<(entry.data.days[0]?.events?.length?21600000:60000)){states[i]='done';render();continue}
     if(stop){states[i]='error';render();continue}
     try{
      const data=await request('/api/tide',{date:start});
      if(data.date!==start||data.station?.id!=='SO_0757'||!Array.isArray(data.days)||data.days.length!==1||data.days[0].date!==start)throw Error('물때 연결을 확인해 주세요. Worker와 화면 파일 모두 업데이트가 필요합니다.');
      records.set(start,data);
-     if(data.days[0].events?.length){const next={at:Date.now(),data};memory.set(start,next);try{localStorage.setItem(storageKey(start),JSON.stringify(next))}catch{}}
+     {const next={at:Date.now(),data};memory.set(start,next);try{localStorage.setItem(storageKey(start),JSON.stringify(next))}catch{}}
      states[i]='done';
     }catch(e){states[i]='error';errors.push(e.message||'일부 날짜의 물때를 확인할 수 없습니다.');if(['TIDE_AUTH','TIDE_LIMIT','TIDE_VERSION','TIDE_FORMAT'].includes(e.code))stop=true}
     finally{render()}
