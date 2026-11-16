@@ -22,7 +22,7 @@ async function fetchForecast(env,nx,ny,origin,ctx){
   const base=provider==='apihub'?'https://apihub.kma.go.kr/api/typ02/openApi/VilageFcstInfoService_2.0/getVilageFcst':'https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst';
   for(const issue of issueTimes()){
     const issueKey=new Request(`${origin}/cache/forecast-issue-v1/${provider}/${nx}/${ny}/${issue.date}${issue.time}`);
-    const stored=globalThis.caches?.default?await globalThis.caches.default.match(issueKey):null;
+    const stored=await safeCacheMatch(issueKey,ctx);
     if(stored)return await stored.json();
     const pageSize=1000;
     const getPage=async page=>{
@@ -62,7 +62,7 @@ async function supplementTodayTemperature(data,env,nx,ny,origin,ctx,category,now
  const key=new Request(`${origin}/cache/today-temperature-v2/${category}/${provider}/${nx}/${ny}/${today}`);
  let value;
  try{
-  const hit=cache?await cache.match(key):null;
+  const hit=await safeCacheMatch(key,ctx);
   if(hit)value=await hit.json();
   if(!value){
    value=await shared(key.url,async()=>{
@@ -316,30 +316,47 @@ async function fetchYesterdayObservations(date){
 }
 // Cache writes must never invalidate a successful upstream response.
 function saveCache(key,data,seconds,ctx){
- const cache=globalThis.caches?.default;
- if(cache&&ctx?.waitUntil)ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Content-Type':'application/json','Cache-Control':`public, max-age=${seconds}`}})).catch(()=>{}));
+ try{
+  const cache=globalThis.caches?.default;
+  if(cache&&ctx?.waitUntil)ctx.waitUntil(Promise.resolve().then(()=>cache.put(key,new Response(JSON.stringify(data),{headers:{'Content-Type':'application/json','Cache-Control':`public, max-age=${seconds}`}}))).catch(()=>{}));
+ }catch{/* Cache failures never turn valid data into a request failure. */}
 }
 async function cachedJSON(key,seconds,ctx,loader){
- const cache=globalThis.caches?.default,hit=cache?await cache.match(key):null;
+ const cache=globalThis.caches?.default,hit=await safeCacheMatch(key,ctx);
  if(hit)return await hit.json();
  return shared(key.url,async()=>{const data=await loader();if(data!==null)saveCache(key,data,seconds,ctx);return data;});
 }
-const pendingUpstream=new Map(),failedUpstream=new Map();
+// Keep only plain failure metadata across invocations, never live I/O promises.
+const failedUpstream=new Map();
 async function shared(key,task){
- if(pendingUpstream.has(key))return pendingUpstream.get(key);
  const failed=failedUpstream.get(key);
- if(failed&&Date.now()<failed.until)throw Object.assign(new Error('재요청 대기'),{status:failed.error.status,code:failed.error.code,upstreamStatus:failed.error.upstreamStatus,cooldown:true});
+ if(failed&&Date.now()<failed.until)throw Object.assign(new Error('재요청 대기'),{...failed,cooldown:true});
  failedUpstream.delete(key);
- const promise=Promise.resolve().then(task);pendingUpstream.set(key,promise);
- try{return await promise}catch(error){
-  if(failedUpstream.size>=128)failedUpstream.delete(failedUpstream.keys().next().value);
-  failedUpstream.set(key,{until:Date.now()+20000,error});throw error;
- }finally{pendingUpstream.delete(key)}
+ try{const data=await task();failedUpstream.delete(key);return data}catch(error){
+  // Unknown internal exceptions must not poison later requests.
+  if(error.status&&error.code&&error.code!=='WATER_INTERNAL'){
+   if(failedUpstream.size>=128)failedUpstream.delete(failedUpstream.keys().next().value);
+   failedUpstream.set(key,{until:Date.now()+20000,status:error.status,code:error.code,upstreamStatus:error.upstreamStatus});
+  }
+  throw error;
+ }
+}
+async function safeCacheMatch(key,ctx,onWarning=()=>{}){
+ try{
+  const cache=globalThis.caches?.default;if(!cache)return null;
+  const hit=await cache.match(key);if(!hit)return null;
+  try{const data=await hit.json();return {json:async()=>data}}
+  catch{
+   onWarning('CACHE_INVALID');
+   if(cache.delete&&ctx?.waitUntil)try{ctx.waitUntil(Promise.resolve().then(()=>cache.delete(key)).catch(()=>{}))}catch{}
+   return null;
+  }
+ }catch{onWarning('CACHE_READ');return null}
 }
 async function primaryForecast(env,nx,ny,origin,ctx){
  const target=issueTimes()[0],stamp=target.date+target.time;
  const key=new Request(`${origin}/cache/weather-main-v1/${env.KMA_PROVIDER||'data-go-kr'}/${nx}/${ny}/${stamp}`);
- const cache=globalThis.caches?.default,hit=cache?await cache.match(key):null;
+ const cache=globalThis.caches?.default,hit=await safeCacheMatch(key,ctx);
  if(hit)return {data:await hit.json(),cache:'hit'};
  const data=await shared(key.url,()=>fetchForecast(env,nx,ny,origin,ctx));
  const actual=data.issuedAt.replace(/[-T:]/g,'').slice(0,12);
@@ -351,14 +368,14 @@ export default {
   async fetch(request,env,ctx){
     const started=Date.now();
     const origin=request.headers.get('Origin')||'',allowed=(env.ALLOWED_ORIGINS||'').split(',').map(s=>s.trim()).filter(Boolean);
-    const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Vary':'Origin','X-Content-Type-Options':'nosniff','X-App-Version':'0.7.2','Access-Control-Expose-Headers':'Server-Timing, X-Data-Cache, X-App-Version'};
+    const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Vary':'Origin','X-Content-Type-Options':'nosniff','X-App-Version':'0.7.3','Access-Control-Expose-Headers':'Server-Timing, X-Data-Cache, X-App-Version, X-Cache-Warning'};
     const respond=(data,status=200)=>{if(status>=400&&!data.code)data={...data,code:status===429?'RATE_LIMIT':status===403?'AUTH':status===400?'BAD_REQUEST':'UPSTREAM'};headers['Server-Timing']=`worker;dur=${Date.now()-started}`;return new Response(JSON.stringify(data),{status,headers})};
     if(origin&&!allowed.includes(origin))return respond({message:'허용된 사이트 주소를 확인해 주세요.'},403);
     if(origin)headers['Access-Control-Allow-Origin']=origin;
     if(request.method==='OPTIONS'){headers['Access-Control-Allow-Methods']='GET, OPTIONS';return new Response(null,{status:204,headers});}
     if(request.method!=='GET')return respond({message:'GET 요청만 지원합니다.'},405);
     const url=new URL(request.url);
-    if(url.pathname==='/api/health')return respond({ok:true,version:'0.7.2',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/health')return respond({ok:true,version:'0.7.3',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
 
 
     if(url.pathname==='/api/observation-yesterday'){
@@ -367,7 +384,7 @@ export default {
       const date=new Date(Date.now()+32400000-86400000).toISOString().slice(0,10).replaceAll('-','');
       try{
         const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/yesterday-observation-v1/${date}`);
-        const hit=cache?await cache.match(key):null;
+        const hit=await safeCacheMatch(key,ctx);
         const data=hit?await hit.json():await shared(key.url,()=>fetchYesterdayObservations(date));
         if(!hit&&cache&&ctx?.waitUntil&&Object.values(data.observations).some(d=>d.rain!==null||d.rainDash))ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':`public, max-age=${Object.values(data.observations).every(d=>d.rain!==null||d.rainDash)?3600:60}`}})));
         headers['X-Data-Cache']=hit?'hit':'miss';return respond(place==='all'?{...data,date}:data.observations[place]);
@@ -379,7 +396,7 @@ export default {
       try{
         const day=new Date(Date.now()+32400000).toISOString().slice(0,10);
         const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/observations-v2/${day}`);
-        const hit=cache?await cache.match(key):null;
+        const hit=await safeCacheMatch(key,ctx);
         const data=hit?await hit.json():await shared(key.url,fetchObservations);
         if(!hit&&cache&&ctx?.waitUntil)ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':'public, max-age=300'}})));
         headers['X-Data-Cache']=hit?'hit':'miss';return respond(place==='all'?data:{...data.observations[place],fetchedAt:data.fetchedAt});
@@ -393,7 +410,7 @@ export default {
       try{
         if(!env.KHOA_SERVICE_KEY&&!env.KMA_SERVICE_KEY)throw tideError('Cloudflare에 KHOA_SERVICE_KEY를 비밀 변수로 등록해 주세요.','TIDE_AUTH',503);
         const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/tide-api-v2/${tideStation.id}/${dateKey}`);
-        const hit=cache?await cache.match(key):null;if(hit){headers['X-Data-Cache']='hit';return respond(await hit.json())}
+        const hit=await safeCacheMatch(key,ctx);if(hit){headers['X-Data-Cache']='hit';return respond(await hit.json())}
         headers['X-Data-Cache']='miss';
         const data=await shared(key.url,()=>fetchTideApi(dateKey,env));
         if(cache&&ctx?.waitUntil&&data.days[0].events.length)ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':'public, max-age=21600'}})));
@@ -405,7 +422,7 @@ export default {
       if(!Object.hasOwn(midRegions,region))return respond({message:'중기예보 지역을 확인해 주세요.'},400);
       try{
         const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/mid-v1/${region}/${midIssueTimes()[0]}`);
-        const hit=cache?await cache.match(key):null;if(hit)return respond(await hit.json());
+        const hit=await safeCacheMatch(key,ctx);if(hit)return respond(await hit.json());
         const data=await shared(key.url,()=>fetchMid(env,region,url.origin,ctx));
         if(cache&&ctx?.waitUntil)ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':'public, max-age=1800'}})));
         return respond(data);
@@ -414,10 +431,11 @@ export default {
     if(url.pathname==='/api/water'||url.pathname==='/api/water-chart'){
       const id=url.searchParams.get('station'),chartOnly=url.pathname==='/api/water-chart';
       if((id&&!waterStations.some(s=>s.id===id))||(chartOnly&&!id))return respond({message:'관측소를 확인해 주세요.'},400);
+      let stage='CACHE_READ';
       try{
-        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/water-v4/${chartOnly?'chart':'level'}/${id||'all'}`);
-        const hit=cache?await cache.match(key):null;if(hit){headers['X-Data-Cache']='hit';return respond(await hit.json())}
-        headers['X-Data-Cache']='miss';
+        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/water-v5/${chartOnly?'chart':'level'}/${id||'all'}`);
+        const hit=await safeCacheMatch(key,ctx,code=>{headers['X-Cache-Warning']=code});if(hit){headers['X-Data-Cache']='hit';return respond(await hit.json())}
+        headers['X-Data-Cache']='miss';stage='UPSTREAM';
         const data=await shared(key.url,async()=>{
           if(chartOnly)return {station:id,officialChart:await fetchOfficialChart(id),fetchedAt:new Date().toISOString()};
           const result=await fetchWater(id,!id);
@@ -427,9 +445,10 @@ export default {
           }
           return result;
         });
-        if(cache&&ctx?.waitUntil&&(chartOnly||data.stations.every(s=>s.level!==null)))ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':`public, max-age=${chartOnly?1800:300}`}})));
+        stage='CACHE_WRITE';if(chartOnly||data.stations.every(s=>s.level!==null))saveCache(key,data,chartOnly?1800:300,ctx);
+        stage='RESPONSE';
         return respond(data);
-      }catch(e){if(e.cooldown)headers['X-Data-Cache']='failure-cooldown';return respond({message:'수문자료 갱신이 지연됩니다.',code:e.code||'WATER_INTERNAL',...(e.upstreamStatus?{upstreamStatus:e.upstreamStatus}:{})},502);}
+      }catch(e){if(e.cooldown)headers['X-Data-Cache']='failure-cooldown';return respond({message:'수문자료 갱신이 지연됩니다.',code:e.code||'WATER_INTERNAL',stage,eType:['Error','TypeError','SyntaxError','RangeError'].includes(e.name)?e.name:'Other',...(e.upstreamStatus?{upstreamStatus:e.upstreamStatus}:{})},502);}
     }
     if(!['/api/weather','/api/weather-extremes'].includes(url.pathname))return respond({message:'주소를 확인해 주세요.'},404);
     if(!env.KMA_SERVICE_KEY)return respond({message:'날씨 연결을 준비하고 있습니다.'},503);

@@ -27,9 +27,9 @@ test('failed repeated requests have cooldown and do not reveal raw upstream erro
  const req=new Request('https://failure-performance/api/weather?nx=56&ny=59');
  for(let i=0;i<2;i++){const r=await worker.fetch(req,env,h.ctx);assert.equal(r.status,502);assert.ok(!(await r.text()).includes('mock-secret'))}assert.equal(calls,1);
 });
-test('concurrent requests coalesce to one upstream call',async t=>{
+test('concurrent invocations do not share live upstream promises',async t=>{
  const h=harness(t);let calls=0,release;const gate=new Promise(r=>release=r);globalThis.fetch=async u=>{calls++;await gate;return json(items(new URL(u).searchParams.get('base_date')))};
  const req=new Request('https://concurrent-performance/api/weather?nx=67&ny=62');
  const a=worker.fetch(req,env,h.ctx),b=worker.fetch(req,env,h.ctx);await new Promise(r=>setImmediate(r));release();
- const result=await Promise.all([a,b]);assert.ok(result.every(r=>r.status===200));assert.equal(calls,1);await h.flush();
+ const result=await Promise.all([a,b]);assert.ok(result.every(r=>r.status===200));assert.equal(calls,2);await h.flush();
 });
