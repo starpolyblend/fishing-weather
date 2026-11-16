@@ -136,12 +136,20 @@ function parseWater(html,station,now=new Date()){
  const gaugeDatum=datumRow?Number(datumRow[3])-Number(datumRow[1]):null;
  return {...latest,history,gaugeDatum};
 }
+function waterFailure(code,upstreamStatus){const e=fail('수문자료 갱신이 지연됩니다.');e.code=code;if(upstreamStatus)e.upstreamStatus=upstreamStatus;return e}
+async function waterResponse(url,options={}){
+ let res;try{res=await fetch(url,options)}catch(e){throw waterFailure(e.name==='TimeoutError'||e.name==='AbortError'?'WATER_TIMEOUT':'WATER_CONNECTION')}
+ if(!res.ok)throw waterFailure('WATER_HTTP',res.status);
+ return res;
+}
 async function fetchOfficialChart(id){
  const end=new Date(),start=new Date(+end-86400000),params=new URLSearchParams({wlobscd:id});
  // Official page uses e for the earlier date, s for the later date.
  for(const [prefix,date] of [['e',start],['s',end]]){const k=new Date(+date+32400000),v=[k.getUTCFullYear(),k.getUTCMonth()+1,k.getUTCDate(),k.getUTCHours(),Math.floor(k.getUTCMinutes()/10)*10];['year','mon','day','hour','min'].forEach((part,i)=>params.set('sel_'+prefix+part,String(v[i]).padStart(2,'0')))}
- const res=await fetch('https://www.yeongsanriver.go.kr/sumun/wlChart.do',{method:'POST',body:params,signal:AbortSignal.timeout(8000)});if(!res.ok)throw Error('chart');
- const rows=await res.json();if(!Array.isArray(rows)||!rows.length)throw Error('chart');
+ const res=await waterResponse('https://www.yeongsanriver.go.kr/sumun/wlChart.do',{method:'POST',body:params,signal:AbortSignal.timeout(8000)});
+ let rows;try{rows=await res.json()}catch{throw waterFailure('WATER_CHART_FORMAT')}
+ if(!Array.isArray(rows))throw waterFailure('WATER_CHART_FORMAT');
+ if(!rows.length)throw waterFailure('WATER_CHART_EMPTY');
  const num=v=>v!==null&&v!==undefined&&String(v).trim()!==''&&Number.isFinite(Number(v))?Number(v):null;
  const thresholds=[['attList','관심','#46bd0a'],['wrnList','주의','#fde700'],['almList','경계','#fc8200'],['srsList','심각','#d21d25']].flatMap(([key,name,color])=>{const value=rows.map(r=>num(r[key])).find(v=>v!==null&&v!==0);return value===undefined?[]:[{name,color,value}]});
  const section=rows.filter(r=>num(r.xVar)!==null&&num(r.yVar)!==null).map(r=>({x:num(r.xVar),y:num(r.yVar)}));
@@ -153,11 +161,10 @@ async function fetchWater(selected=null,includeChart=true){
   const base={id:station.id,name:station.name,unit:station.unit,datum:station.datum,sourceUrl};
   try{
    const chartPromise=includeChart?fetchOfficialChart(station.id).catch(()=>null):Promise.resolve(null);
-   const res=await fetch(sourceUrl,{signal:AbortSignal.timeout(10000)});
-   if(!res.ok)throw new Error('upstream');
-   const parsed=parseWater(await res.text(),station);
-   return {...base,...parsed,officialChart:await chartPromise,...(parsed.level===null?{error:'해당 시각의 수위가 제공되지 않았습니다.'}:{})};
-  }catch{return {...base,level:null,observedAt:null,history:[],error:'공개 관측자료를 읽지 못했습니다. 공식 자료를 확인해 주세요.'};}
+   const res=await waterResponse(sourceUrl,{signal:AbortSignal.timeout(10000)});
+   let parsed;try{parsed=parseWater(await res.text(),station)}catch{throw waterFailure('WATER_FORMAT')}
+   return {...base,...parsed,officialChart:await chartPromise,...(parsed.level===null?{error:'해당 시각의 수위가 제공되지 않았습니다.',errorCode:'WATER_NO_VALUE'}:{})};
+  }catch(e){return {...base,level:null,observedAt:null,history:[],error:'수위 갱신 지연',errorCode:e.code||'WATER_INTERNAL',...(e.upstreamStatus?{upstreamStatus:e.upstreamStatus}:{})};}
  }));
  return {source:'영산강홍수통제소 공개 수위자료',fetchedAt:new Date().toISOString(),stations};
 }
@@ -321,7 +328,7 @@ const pendingUpstream=new Map(),failedUpstream=new Map();
 async function shared(key,task){
  if(pendingUpstream.has(key))return pendingUpstream.get(key);
  const failed=failedUpstream.get(key);
- if(failed&&Date.now()<failed.until)throw failed.error;
+ if(failed&&Date.now()<failed.until)throw Object.assign(new Error('재요청 대기'),{status:failed.error.status,code:failed.error.code,upstreamStatus:failed.error.upstreamStatus,cooldown:true});
  failedUpstream.delete(key);
  const promise=Promise.resolve().then(task);pendingUpstream.set(key,promise);
  try{return await promise}catch(error){
@@ -344,14 +351,14 @@ export default {
   async fetch(request,env,ctx){
     const started=Date.now();
     const origin=request.headers.get('Origin')||'',allowed=(env.ALLOWED_ORIGINS||'').split(',').map(s=>s.trim()).filter(Boolean);
-    const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Vary':'Origin','X-Content-Type-Options':'nosniff','X-App-Version':'0.7.0','Access-Control-Expose-Headers':'Server-Timing, X-Data-Cache, X-App-Version'};
+    const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Vary':'Origin','X-Content-Type-Options':'nosniff','X-App-Version':'0.7.2','Access-Control-Expose-Headers':'Server-Timing, X-Data-Cache, X-App-Version'};
     const respond=(data,status=200)=>{if(status>=400&&!data.code)data={...data,code:status===429?'RATE_LIMIT':status===403?'AUTH':status===400?'BAD_REQUEST':'UPSTREAM'};headers['Server-Timing']=`worker;dur=${Date.now()-started}`;return new Response(JSON.stringify(data),{status,headers})};
     if(origin&&!allowed.includes(origin))return respond({message:'허용된 사이트 주소를 확인해 주세요.'},403);
     if(origin)headers['Access-Control-Allow-Origin']=origin;
     if(request.method==='OPTIONS'){headers['Access-Control-Allow-Methods']='GET, OPTIONS';return new Response(null,{status:204,headers});}
     if(request.method!=='GET')return respond({message:'GET 요청만 지원합니다.'},405);
     const url=new URL(request.url);
-    if(url.pathname==='/api/health')return respond({ok:true,version:'0.7.0',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/health')return respond({ok:true,version:'0.7.2',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
 
 
     if(url.pathname==='/api/observation-yesterday'){
@@ -411,10 +418,18 @@ export default {
         const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/water-v4/${chartOnly?'chart':'level'}/${id||'all'}`);
         const hit=cache?await cache.match(key):null;if(hit){headers['X-Data-Cache']='hit';return respond(await hit.json())}
         headers['X-Data-Cache']='miss';
-        const data=await shared(key.url,async()=>chartOnly?{station:id,officialChart:await fetchOfficialChart(id),fetchedAt:new Date().toISOString()}:await fetchWater(id,!id));
+        const data=await shared(key.url,async()=>{
+          if(chartOnly)return {station:id,officialChart:await fetchOfficialChart(id),fetchedAt:new Date().toISOString()};
+          const result=await fetchWater(id,!id);
+          // No usable station is a failed request, even when the source returned HTTP 200.
+          if(result.stations.every(s=>s.level===null)){
+            const first=result.stations[0];throw waterFailure(first?.errorCode||'WATER_NO_VALUE',first?.upstreamStatus);
+          }
+          return result;
+        });
         if(cache&&ctx?.waitUntil&&(chartOnly||data.stations.every(s=>s.level!==null)))ctx.waitUntil(cache.put(key,new Response(JSON.stringify(data),{headers:{'Cache-Control':`public, max-age=${chartOnly?1800:300}`}})));
         return respond(data);
-      }catch{return respond({message:chartOnly?'그래프 부가자료를 가져오지 못했습니다.':'수위 자료를 가져오지 못했습니다.'},502);}
+      }catch(e){if(e.cooldown)headers['X-Data-Cache']='failure-cooldown';return respond({message:'수문자료 갱신이 지연됩니다.',code:e.code||'WATER_INTERNAL',...(e.upstreamStatus?{upstreamStatus:e.upstreamStatus}:{})},502);}
     }
     if(!['/api/weather','/api/weather-extremes'].includes(url.pathname))return respond({message:'주소를 확인해 주세요.'},404);
     if(!env.KMA_SERVICE_KEY)return respond({message:'날씨 연결을 준비하고 있습니다.'},503);
