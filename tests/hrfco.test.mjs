@@ -18,3 +18,17 @@ test('key-enabled Worker uses HTTPS API only, reuses metadata, and returns histo
  assert.equal(urls.length,3);assert.match(urls[1].pathname,/\/list\/10M\/4007630\/\d{12}\/\d{12}\.json$/);
 });
 test('auth error 940 is available for diagnosis without exposing key or raw error',async t=>{const h=harness(t);globalThis.fetch=async()=>new Response(JSON.stringify({result:{code:940,message:'mock-private-key'}}));const r=await worker.fetch(new Request('https://api-auth-test/api/water?station=4007630'),{HRFCO_SERVICE_KEY:'mock-private-key'},h.ctx),d=await r.json();assert.equal(r.status,502);assert.equal(d.code,'HRFCO_AUTH');assert.equal(d.apiCode,'940');assert.ok(!JSON.stringify(d).includes('mock-private-key'))});
+test('diagnostics isolate metadata failure while latest and history succeed, with safe phase timing',async t=>{
+ const h=harness(t);let calls=0;globalThis.fetch=async input=>{calls++;if(String(input).endsWith('/info.json'))throw new TypeError('mock-private-key');const stamp=new Date(Date.now()+32400000-1200000).toISOString().slice(0,16).replace(/[-T:]/g,'');return new Response(JSON.stringify({content:[{wlobscd:bridge.id,ymdhm:stamp,wl:'2.16'}]}),{headers:{'Content-Type':'application/json'}})};
+ const req=new Request('https://diag-isolate/api/water-diagnostics?station=4007630'),r=await worker.fetch(req,{HRFCO_SERVICE_KEY:'mock-private-key'},h.ctx),d=await r.json();
+ assert.equal(d.ok,false);assert.equal(d.steps.find(s=>s.step==='INFO').phase,'CONNECT');assert.equal(d.steps.find(s=>s.step==='LATEST').result,'OK');assert.equal(d.steps.find(s=>s.step==='HISTORY').result,'OK');assert.equal(d.validation.result,'INFO_FAILED');assert.equal(calls,3);assert.ok(!JSON.stringify(d).includes('mock-private-key'));
+ await h.flush();const cached=await worker.fetch(req,{HRFCO_SERVICE_KEY:'mock-private-key'},h.ctx);assert.equal(cached.headers.get('X-Data-Cache'),'hit');assert.equal(calls,3);
+});
+test('diagnostics distinguish body timeout from HTML response without leaking HTML',async t=>{
+ const h=harness(t);globalThis.fetch=async input=>String(input).endsWith('/info.json')?{status:200,ok:true,headers:new Headers(),text:async()=>{throw new DOMException('mock-private-key','TimeoutError')}}:new Response('<html>mock-private-key</html>',{headers:{'Content-Type':'text/html'}});
+ const r=await worker.fetch(new Request('https://diag-body/api/water-diagnostics?station=4007630'),{HRFCO_SERVICE_KEY:'mock-private-key'},h.ctx),d=await r.json();assert.equal(d.steps[0].phase,'BODY');assert.equal(d.steps[0].result,'WATER_TIMEOUT');assert.equal(d.steps[1].phase,'PARSE');assert.equal(d.steps[1].format,'HTML');assert.ok(!JSON.stringify(d).includes('mock-private-key'));
+});
+test('missing key diagnostics perform no upstream requests and bad station is rejected',async t=>{
+ const h=harness(t);globalThis.fetch=async()=>{throw Error('must not fetch')};const r=await worker.fetch(new Request('https://diag-nokey/api/water-diagnostics?station=4007630'),{},h.ctx),d=await r.json();assert.equal(d.keyConfigured,false);assert.ok(d.steps.every(s=>s.result==='HRFCO_KEY'&&s.phase==='CONFIG'));
+ const bad=await worker.fetch(new Request('https://diag-nokey/api/water-diagnostics?station=123'),{},h.ctx);assert.equal(bad.status,400);
+});
