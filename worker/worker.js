@@ -109,83 +109,6 @@ async function supplementTodayExtremes(data,env,nx,ny,origin,ctx,now=new Date())
  for(const entry of results)for(const key of ['dailyMinimumSupplement','dailyMaximumSupplement'])if(entry[key])result[key]=entry[key];
  return result;
 }
-// HRFCO reference: waterlevel/info and waterlevel/list/10M/{station}/{start}/{end}.
-// Credentials stay in the Worker; never return/log the upstream URL or response body.
-function hrfcoError(code,apiCode){const e=waterFailure(code);if(apiCode)e.apiCode=String(apiCode);return e}
-function hrfcoNumber(v){if(v===null||v===undefined||String(v).trim()===''||!/^[-+]?\d+(\.\d+)?$/.test(String(v).trim()))return null;const n=Number(v);return Number.isFinite(n)&&n>-900?n:null}
-function hrfcoRows(body){
- const rows=[];let apiCode;
- const visit=(value,depth=0)=>{if(depth>12||!value||typeof value!=='object')return;if(Array.isArray(value)){value.forEach(v=>visit(v,depth+1));return}
-  const row=Object.fromEntries(Object.entries(value).map(([k,v])=>[k.toLowerCase(),v]));
-  for(const k of ['code','errorcode','resultcode'])if(/^(900|910|920|930|940|941|942|943|944|990|400|401|403|404|500|501|502|503)$/.test(String(row[k])))apiCode=String(row[k]);
-  if(Object.hasOwn(row,'wlobscd'))rows.push(row);else Object.values(value).forEach(v=>visit(v,depth+1));
- };visit(body);
- if(apiCode)throw hrfcoError(['900','940','941','942','943','944','401','403'].includes(apiCode)?'HRFCO_AUTH':apiCode==='920'?'HRFCO_STATION':apiCode==='990'?'HRFCO_NO_DATA':'HRFCO_API',apiCode);
- if(!rows.length)throw hrfcoError('HRFCO_NO_DATA');return rows;
-}
-async function hrfcoGet(env,path,trace=[]){
- const step=path==='info'?'INFO':path.split('/').length>3?'HISTORY':'LATEST';
- const entry={step,phase:'CONFIG',ms:0},started=Date.now();trace.push(entry);
- try{
-  const key=String(env.HRFCO_SERVICE_KEY||'').trim();if(!key)throw hrfcoError('HRFCO_KEY');
-  entry.phase='CONNECT';let response;
-  try{response=await fetch(`https://api.hrfco.go.kr/${encodeURIComponent(key)}/waterlevel/${path}.json`,{signal:AbortSignal.timeout(10000),redirect:'error'})}catch(e){throw hrfcoError(['TimeoutError','AbortError'].includes(e.name)?'WATER_TIMEOUT':'HRFCO_CONNECTION')}
-  entry.httpStatus=response.status;entry.headersMs=Date.now()-started;
-  // Classify, never echo a server-provided header or error message.
-  const type=response.headers?.get('Content-Type')||'';entry.format=/json/i.test(type)?'JSON':/html/i.test(type)?'HTML':/xml/i.test(type)?'XML':'OTHER';
-  entry.phase='BODY';let text;
-  try{text=await response.text()}catch(e){throw hrfcoError(['TimeoutError','AbortError'].includes(e.name)?'WATER_TIMEOUT':'HRFCO_BODY')}
-  entry.bodyMs=Date.now()-started-entry.headersMs;entry.phase='PARSE';let body;
-  try{body=JSON.parse(text)}catch{throw hrfcoError('HRFCO_FORMAT')}
-  if(!response.ok){try{hrfcoRows(body)}catch(e){if(e.apiCode)throw e}throw waterFailure('WATER_HTTP',response.status)}
-  const rows=hrfcoRows(body);entry.rows=rows.length;entry.result='OK';entry.phase='DONE';return rows;
- }catch(e){entry.result=e.code||'HRFCO_INTERNAL';if(e.apiCode)entry.apiCode=e.apiCode;e.apiStep=step;e.apiPhase=entry.phase;throw e}
- finally{entry.ms=Date.now()-started}
-}
-async function diagnoseHrfco(station,env){
- const trace=[],end=Math.floor(Date.now()/600000)*600000,start=end-26*3600000;
- const stamp=n=>new Date(n+32400000).toISOString().slice(0,16).replace(/[-T:]/g,'');
- const paths=['info',`list/10M/${station.id}`,`list/10M/${station.id}/${stamp(start)}/${stamp(end)}`];
- const results=await Promise.allSettled(paths.map(path=>hrfcoGet(env,path,trace)));
- const summary={station:station.id,keyConfigured:!!String(env.HRFCO_SERVICE_KEY||'').trim(),testedAt:new Date().toISOString(),steps:trace};
- const meta=results[0].status==='fulfilled'?results[0].value.find(r=>String(r.wlobscd)===station.id):null;
- summary.metadata={found:!!meta,datumPresent:hrfcoNumber(meta?.gdt)!==null};
- for(const [index,label] of [[1,'latest'],[2,'history']]){
-  if(results[index].status!=='fulfilled')continue;
-  const rows=results[index].value.filter(r=>String(r.wlobscd)===station.id),times=rows.map(r=>hrfcoTimestamp(r.ymdhm)).filter(Boolean).sort();
-  summary[label]={matchingRows:rows.length,validValues:rows.filter(r=>hrfcoNumber(r.wl)!==null).length,firstObservedAt:times[0]||null,lastObservedAt:times.at(-1)||null};
- }
- if(meta&&results[2].status==='fulfilled')try{const d=parseHrfcoWater(results[2].value,meta,station);summary.validation={result:'OK',level:d.level,unit:d.unit,observedAt:d.observedAt,historyPoints:d.history.length}}catch(e){summary.validation={result:e.code||'HRFCO_INTERNAL'}}
- else summary.validation={result:results[0].status==='rejected'?'INFO_FAILED':!meta?'HRFCO_STATION':'HISTORY_FAILED'};
- summary.ok=trace.every(s=>s.result==='OK')&&summary.validation.result==='OK';return summary;
-}
-
-function hrfcoTimestamp(value){
- const s=String(value??'');if(!/^\d{12}$/.test(s))return null;
- const iso=`${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}T${s.slice(8,10)}:${s.slice(10,12)}:00+09:00`,n=Date.parse(iso);
- if(!Number.isFinite(n)||new Date(n+32400000).toISOString().slice(0,16).replace(/[-T:]/g,'')!==s)return null;return iso;
-}
-function parseHrfcoWater(rows,meta,station,now=Date.now()){
- const name=String(meta?.obsnm||'').replace(/\s/g,'');
- if(String(meta?.wlobscd)!==station.id||!(station.id==='4007630'?name.includes('가장교'):name.includes('보성강댐')))throw hrfcoError('HRFCO_STATION');
- const gaugeDatum=hrfcoNumber(meta.gdt);if(station.unit==='EL.m'&&gaugeDatum===null)throw hrfcoError('HRFCO_DATUM');
- const samples=new Map();for(const row of rows){if(String(row.wlobscd)!==station.id)continue;const observedAt=hrfcoTimestamp(row.ymdhm),at=Date.parse(observedAt);if(!observedAt||at>now+300000||at<now-48*3600000)continue;
-  const wl=hrfcoNumber(row.wl),level=wl===null?null:wl+(station.unit==='EL.m'?gaugeDatum:0);samples.set(at,{observedAt,level});
- }
- const sorted=[...samples.values()].sort((a,b)=>Date.parse(a.observedAt)-Date.parse(b.observedAt)),latest=sorted.filter(p=>p.level!==null).at(-1);
- if(!latest)throw hrfcoError('HRFCO_NO_DATA');const end=Date.parse(latest.observedAt);
- return {id:station.id,name:station.name,unit:station.unit,datum:station.datum,provider:'hrfco',sourceUrl:`https://www.yeongsanriver.go.kr/sumun/waterDetail.do?wlobscd=${station.id}`,...latest,gaugeDatum,history:sorted.filter(p=>Date.parse(p.observedAt)>=end-86400000&&Date.parse(p.observedAt)<=end),officialChart:{thresholds:[],section:[]}};
-}
-async function fetchHrfcoWater(id,env,origin,ctx){
- const stations=waterStations.filter(s=>!id||s.id===id);
- const metaKey=new Request(`${origin}/cache/hrfco-info-v1`);
- const metadata=await cachedJSON(metaKey,86400,ctx,()=>hrfcoGet(env,'info'));
- const end=Math.floor(Date.now()/600000)*600000,start=end-26*3600000;
- const stamp=n=>new Date(n+32400000).toISOString().slice(0,16).replace(/[-T:]/g,'');
- const result=await Promise.all(stations.map(async station=>{const meta=metadata.find(r=>String(r.wlobscd)===station.id);if(!meta)throw hrfcoError('HRFCO_STATION');const rows=await hrfcoGet(env,`list/10M/${station.id}/${stamp(start)}/${stamp(end)}`);return parseHrfcoWater(rows,meta,station)}));
- return {source:'한강홍수통제소 Open API',provider:'hrfco',fetchedAt:new Date().toISOString(),stations:result};
-}
-
 
 const waterStations=[
  {id:'4007630',name:'보성군 가장교',unit:'m',datum:'수위표수위',column:1},
@@ -416,7 +339,7 @@ async function shared(key,task){
   // Unknown internal exceptions must not poison later requests.
   if(error.status&&error.code&&error.code!=='WATER_INTERNAL'){
    if(failedUpstream.size>=128)failedUpstream.delete(failedUpstream.keys().next().value);
-   failedUpstream.set(key,{until:Date.now()+20000,status:error.status,code:error.code,upstreamStatus:error.upstreamStatus,apiCode:error.apiCode,apiStep:error.apiStep,apiPhase:error.apiPhase});error.retryAfterMs=20000;
+   failedUpstream.set(key,{until:Date.now()+20000,status:error.status,code:error.code,upstreamStatus:error.upstreamStatus});error.retryAfterMs=20000;
   }
   throw error;
  }
@@ -448,14 +371,14 @@ export default {
   async fetch(request,env,ctx){
     const started=Date.now();
     const origin=request.headers.get('Origin')||'',allowed=(env.ALLOWED_ORIGINS||'').split(',').map(s=>s.trim()).filter(Boolean);
-    const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Vary':'Origin','X-Content-Type-Options':'nosniff','X-App-Version':'0.7.6','Access-Control-Expose-Headers':'Server-Timing, X-Data-Cache, X-App-Version, X-Cache-Warning'};
+    const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Vary':'Origin','X-Content-Type-Options':'nosniff','X-App-Version':'0.7.4','Access-Control-Expose-Headers':'Server-Timing, X-Data-Cache, X-App-Version, X-Cache-Warning'};
     const respond=(data,status=200)=>{if(status>=400&&!data.code)data={...data,code:status===429?'RATE_LIMIT':status===403?'AUTH':status===400?'BAD_REQUEST':'UPSTREAM'};headers['Server-Timing']=`worker;dur=${Date.now()-started}`;return new Response(JSON.stringify(data),{status,headers})};
     if(origin&&!allowed.includes(origin))return respond({message:'허용된 사이트 주소를 확인해 주세요.'},403);
     if(origin)headers['Access-Control-Allow-Origin']=origin;
     if(request.method==='OPTIONS'){headers['Access-Control-Allow-Methods']='GET, OPTIONS';return new Response(null,{status:204,headers});}
     if(request.method!=='GET')return respond({message:'GET 요청만 지원합니다.'},405);
     const url=new URL(request.url);
-    if(url.pathname==='/api/health')return respond({ok:true,version:'0.7.6',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,waterApiKeyConfigured:!!env.HRFCO_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/health')return respond({ok:true,version:'0.7.4',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
 
 
     if(url.pathname==='/api/observation-yesterday'){
@@ -508,25 +431,16 @@ export default {
         return respond(data);
       }catch(e){return respond({message:e.status?e.message:'중기예보를 불러오지 못했습니다.',retryAfterMs:e.retryAfterMs},e.status||502);}
     }
-    if(url.pathname==='/api/water-diagnostics'){
-      const station=waterStations.find(s=>s.id===url.searchParams.get('station'));
-      if(!station)return respond({code:'BAD_REQUEST',message:'관측소를 선택해 주세요.'},400);
-      const key=new Request(`${url.origin}/cache/hrfco-diagnostics-v1/${station.id}/${env.HRFCO_SERVICE_KEY?'configured':'missing'}`);
-      const hit=await safeCacheMatch(key,ctx);headers['X-Data-Cache']=hit?'hit':'miss';
-      const data=hit?await hit.json():await diagnoseHrfco(station,env);
-      if(!hit)saveCache(key,data,60,ctx);return respond(data);
-    }
     if(url.pathname==='/api/water'||url.pathname==='/api/water-chart'){
       const id=url.searchParams.get('station'),chartOnly=url.pathname==='/api/water-chart';
       if((id&&!waterStations.some(s=>s.id===id))||(chartOnly&&!id))return respond({message:'관측소를 확인해 주세요.'},400);
       let stage='CACHE_READ';
       try{
-        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/water-v6/${env.HRFCO_SERVICE_KEY?'hrfco':'html'}/${chartOnly?'chart':'level'}/${id||'all'}`);
+        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/water-v5/${chartOnly?'chart':'level'}/${id||'all'}`);
         const hit=await safeCacheMatch(key,ctx,code=>{headers['X-Cache-Warning']=code});if(hit){headers['X-Data-Cache']='hit';return respond(await hit.json())}
         headers['X-Data-Cache']='miss';stage='UPSTREAM';
         const data=await shared(key.url,async()=>{
-          if(chartOnly)return {station:id,officialChart:env.HRFCO_SERVICE_KEY?{thresholds:[],section:[]}:await fetchOfficialChart(id),provider:env.HRFCO_SERVICE_KEY?'hrfco':'html',fetchedAt:new Date().toISOString()};
-          if(env.HRFCO_SERVICE_KEY)return await fetchHrfcoWater(id,env,url.origin,ctx);
+          if(chartOnly)return {station:id,officialChart:await fetchOfficialChart(id),fetchedAt:new Date().toISOString()};
           const result=await fetchWater(id,!id);
           // No usable station is a failed request, even when the source returned HTTP 200.
           if(result.stations.every(s=>s.level===null)){
@@ -537,7 +451,7 @@ export default {
         stage='CACHE_WRITE';if(chartOnly||data.stations.every(s=>s.level!==null))saveCache(key,data,chartOnly?1800:300,ctx);
         stage='RESPONSE';
         return respond(data);
-      }catch(e){if(e.cooldown)headers['X-Data-Cache']='failure-cooldown';return respond({message:'수문자료 갱신이 지연됩니다.',code:e.code||'WATER_INTERNAL',stage,retryAfterMs:e.retryAfterMs??20000,apiCode:e.apiCode,apiStep:e.apiStep,apiPhase:e.apiPhase,eType:['Error','TypeError','SyntaxError','RangeError'].includes(e.name)?e.name:'Other',...(e.upstreamStatus?{upstreamStatus:e.upstreamStatus}:{})},502);}
+      }catch(e){if(e.cooldown)headers['X-Data-Cache']='failure-cooldown';return respond({message:'수문자료 갱신이 지연됩니다.',code:e.code||'WATER_INTERNAL',stage,retryAfterMs:e.retryAfterMs??20000,eType:['Error','TypeError','SyntaxError','RangeError'].includes(e.name)?e.name:'Other',...(e.upstreamStatus?{upstreamStatus:e.upstreamStatus}:{})},502);}
     }
     if(!['/api/weather','/api/weather-extremes'].includes(url.pathname))return respond({message:'주소를 확인해 주세요.'},404);
     if(!env.KMA_SERVICE_KEY)return respond({message:'날씨 연결을 준비하고 있습니다.'},503);
@@ -583,5 +497,3 @@ function applyForecastKinds(rows,issue){
  }
  return rows;
 }
-
-export {hrfcoRows,parseHrfcoWater,hrfcoTimestamp};

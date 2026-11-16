@@ -1,12 +1,12 @@
-import {recordDiagnostic,diagnosticParams} from './diagnostics.js?v=0.7.6';
-import {isNight} from './daylight.js?v=0.7.6';
-import {createObservationView} from './observation.js?v=0.7.6';
-import {createTideView} from './tides.js?v=0.7.6';
-import {windArrow,windSpeed} from './wind.js?v=0.7.6';
-import {waterChart,bindWaterCharts} from './water-chart.js?v=0.7.6';
-import {dayOffset,grid,kstDate} from './core.js?v=0.7.6';
-import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.7.6';
-import {weatherLabel} from './core.js?v=0.7.6';
+import {recordDiagnostic,diagnosticParams} from './diagnostics.js?v=0.7.4';
+import {isNight} from './daylight.js?v=0.7.4';
+import {createObservationView} from './observation.js?v=0.7.4';
+import {createTideView} from './tides.js?v=0.7.4';
+import {windArrow,windSpeed} from './wind.js?v=0.7.4';
+import {waterChart,bindWaterCharts} from './water-chart.js?v=0.7.4';
+import {dayOffset,grid,kstDate} from './core.js?v=0.7.4';
+import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.7.4';
+import {weatherLabel} from './core.js?v=0.7.4';
 const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),demo=new URLSearchParams(location.search).get('demo')==='1';
 const places=(cfg.locations||[]).slice(0,4),memory=new Map(),midMemory=new Map();let saved;
 try{saved=localStorage.getItem('fishing-place')}catch{}
@@ -63,12 +63,12 @@ async function jsonRequest(path,params){
  const failed=failedRequests.get(key);if(failed&&Date.now()<failed.until){recordDiagnostic({path,params:diagnosticParams(params),result:'COOLDOWN'});throw failed.error}
  const pending=(async()=>{const start=performance.now();let status=0,cache='',worker='',serverTiming='',cacheWarning='';try{
   const res=await fetch(url,{signal:AbortSignal.timeout(25000),cache:'no-store'});status=res.status;cache=res.headers.get('X-Data-Cache')||'';worker=res.headers.get('X-App-Version')||'';serverTiming=res.headers.get('Server-Timing')||'';cacheWarning=res.headers.get('X-Cache-Warning')||'';
-  const data=await res.json();if(!res.ok){const error=Error('자료 갱신이 지연됩니다. 잠시 후 다시 확인해 주세요.');error.code=/^[A-Z_]{1,40}$/.test(data.code||'')?data.code:'HTTP_ERROR';if(['CACHE_READ','UPSTREAM','CACHE_WRITE','RESPONSE'].includes(data.stage))error.stage=data.stage;if(['Error','TypeError','SyntaxError','RangeError','Other'].includes(data.eType))error.eType=data.eType;if(['INFO','LATEST','HISTORY'].includes(data.apiStep))error.apiStep=data.apiStep;if(['CONFIG','CONNECT','BODY','PARSE','DONE'].includes(data.apiPhase))error.apiPhase=data.apiPhase;if(/^\d{3}$/.test(String(data.apiCode||'')))error.apiCode=String(data.apiCode);if(Number.isFinite(data.retryAfterMs))error.retryAfterMs=Math.max(0,Math.min(20000,data.retryAfterMs));if(Number.isInteger(data.upstreamStatus)&&data.upstreamStatus>=100&&data.upstreamStatus<=599)error.upstreamStatus=data.upstreamStatus;throw error}
+  const data=await res.json();if(!res.ok){const error=Error('자료 갱신이 지연됩니다. 잠시 후 다시 확인해 주세요.');error.code=/^[A-Z_]{1,40}$/.test(data.code||'')?data.code:'HTTP_ERROR';if(['CACHE_READ','UPSTREAM','CACHE_WRITE','RESPONSE'].includes(data.stage))error.stage=data.stage;if(['Error','TypeError','SyntaxError','RangeError','Other'].includes(data.eType))error.eType=data.eType;if(Number.isFinite(data.retryAfterMs))error.retryAfterMs=Math.max(0,Math.min(20000,data.retryAfterMs));if(Number.isInteger(data.upstreamStatus)&&data.upstreamStatus>=100&&data.upstreamStatus<=599)error.upstreamStatus=data.upstreamStatus;throw error}
   if(path==='/api/water'&&!data.stations?.some(s=>Number.isFinite(s.level))){const e=Error('수위 누락');e.code='WATER_NO_VALUE';throw e}
-  failedRequests.delete(key);recordDiagnostic({path,params:diagnosticParams(params),status,cache,worker,serverTiming,cacheWarning,ms:Math.round(performance.now()-start),result:'OK',provider:data.provider,issuedAt:data.issuedAt,fetchedAt:data.fetchedAt});return data;
+  failedRequests.delete(key);recordDiagnostic({path,params:diagnosticParams(params),status,cache,worker,serverTiming,cacheWarning,ms:Math.round(performance.now()-start),result:'OK',issuedAt:data.issuedAt,fetchedAt:data.fetchedAt});return data;
  }catch(e){const error=Error('자료 갱신이 지연됩니다. 잠시 후 다시 확인해 주세요.');error.code=['TimeoutError','AbortError'].includes(e.name)?'TIMEOUT':typeof e.code==='string'&&/^[A-Z_]{1,40}$/.test(e.code)?e.code:e instanceof TypeError?'NETWORK_OR_CORS':'INVALID_RESPONSE';
   failedRequests.set(key,{until:Date.now()+(Number.isFinite(e.retryAfterMs)?e.retryAfterMs:20000),error});if(failedRequests.size>100)failedRequests.delete(failedRequests.keys().next().value);
-  recordDiagnostic({path,params:diagnosticParams(params),status,cache,worker,serverTiming,cacheWarning,ms:Math.round(performance.now()-start),upstreamStatus:e.upstreamStatus,stage:e.stage,eType:e.eType,apiCode:e.apiCode,apiStep:e.apiStep,apiPhase:e.apiPhase,result:error.code});throw error;
+  recordDiagnostic({path,params:diagnosticParams(params),status,cache,worker,serverTiming,cacheWarning,ms:Math.round(performance.now()-start),upstreamStatus:e.upstreamStatus,stage:e.stage,eType:e.eType,result:error.code});throw error;
  }})();
  pendingRequests.set(key,pending);try{return await pending}finally{pendingRequests.delete(key)}
 }
@@ -117,12 +117,12 @@ function renderWater(){
 }
 async function loadWater(force=false){
  const id=waterSelection,ticket=++waterSerial;
- const cache=cached(waterMemory,'water-api-v1',id,3600000,d=>d?.id===id&&Array.isArray(d.history));
+ const cache=cached(waterMemory,'water',id,3600000,d=>d?.id===id&&Array.isArray(d.history));
  const chartCache=cached(chartMemory,'chart',id,86400000,d=>d?.station===id&&!!d.officialChart);
  let level=null,levelNotice='',chart=chartCache?.data.officialChart||null,chartLoading=!chartCache,chartFailed=false;
  const paint=()=>{
   if(ticket!==waterSerial||!level)return;
-  waterData={stations:[level.provider==='hrfco'?{...level,chartLoading:false,chartFailed:false}:{...level,officialChart:chart,chartLoading,chartFailed}]};renderWater();
+  waterData={stations:[{...level,officialChart:chart,chartLoading,chartFailed}]};renderWater();
   if(levelNotice)$('#water-content').insertAdjacentHTML('afterbegin',`<p class="notice">${esc(levelNotice)}</p>`);
  };
  if(cache){level=cache.data;levelNotice='수위 업데이트 확인 중…';paint()}else $('#water-content').innerHTML=empty('수위를 가져오는 중입니다.','선택한 관측소부터 확인합니다.');
@@ -135,13 +135,13 @@ async function loadWater(force=false){
   try{const d=await jsonRequest('/api/water-chart',{station:id});if(d.station!==id||!d.officialChart)throw Error('chart');remember(chartMemory,'chart',id,d);chart=d.officialChart}
   catch{chartFailed=true}finally{chartLoading=false;paint()}
  };
-
+ void chartTask();
  try{
   const s=!force&&cache&&Date.now()-cache.at<300000?cache.data:(await jsonRequest('/api/water',{station:id})).stations?.find(s=>s.id===id);
   if(!s||!Array.isArray(s.history))throw Error('수위 자료 형식을 확인해 주세요. Worker를 최신 버전으로 배포했는지 확인해 주세요.');
   if(s.level===null&&cache){level=cache.data;levelNotice='최신 수위 확인 실패 · 이전 관측자료입니다.'}
-  else{level=s;levelNotice='';if(s.level!==null&&s!==cache?.data)remember(waterMemory,'water-api-v1',id,s)}
-  paint();if(s.provider!=='hrfco')void chartTask();
+  else{level=s;levelNotice='';if(s.level!==null&&s!==cache?.data)remember(waterMemory,'water',id,s)}
+  paint();
  }catch(e){if(cache){level=cache.data;levelNotice='수위 갱신 실패 · 이전 관측자료입니다. 관측 시각을 확인해 주세요.';paint()}else if(ticket===waterSerial)$('#water-content').innerHTML=empty('수위를 확인할 수 없습니다.',e.message||'잠시 후 다시 시도해 주세요.')}
  finally{if(ticket===waterSerial)$('#water-refresh').disabled=false}
 }
@@ -150,19 +150,3 @@ const tideView=createTideView({request:jsonRequest,apiBase:cfg.apiBase,demo});
 $('#tide-refresh').onclick=()=>tideView.load(true);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){$('#today').textContent=dateLabel(kstDate());if(activeTab==='weather')load();else if(activeTab==='water')loadWater();else tideView.load()}});
 load();
-
-// Manual developer diagnostics. Never run these extra upstream calls on tab changes.
-let waterCheckBusy=false;
-document.querySelectorAll('[data-water-check]').forEach(button=>button.addEventListener('click',async()=>{
- if(waterCheckBusy)return;waterCheckBusy=true;
- const buttons=[...document.querySelectorAll('[data-water-check]')],status=document.querySelector('#water-check-status');buttons.forEach(b=>b.disabled=true);
- status.textContent='제원·현재 수위·시간별 기록을 각각 확인 중입니다…';
- try{
-  const d=await jsonRequest('/api/water-diagnostics',{station:button.dataset.waterCheck});
-  if(!Array.isArray(d.steps)||!d.validation)throw Error('Worker 업데이트를 확인해 주세요.');
-  recordDiagnostic({path:'/api/water-diagnostics',params:{station:button.dataset.waterCheck},result:d.ok?'DIAGNOSTIC_OK':'DIAGNOSTIC_FAILED',diagnostic:d});
-  const names={INFO:'관측소 제원',LATEST:'현재 수위',HISTORY:'시간별 기록'};
-  status.textContent=d.steps.map(s=>`${names[s.step]||'조회'}: ${s.result==='OK'?'성공':s.result} (${(s.ms/1000).toFixed(2)}초)`).join(' / ')+` · 자료 검증: ${d.validation.result} · 기록 복사로 결과를 보내주세요. 같은 지점은 1분 동안 점검 결과를 재사용합니다.`;
- }catch{status.textContent='점검 요청을 완료하지 못했습니다. Worker 배포와 연결 상태를 확인하고 기록 복사를 눌러주세요.'}
- finally{waterCheckBusy=false;buttons.forEach(b=>b.disabled=false)}
-}));
