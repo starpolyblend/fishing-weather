@@ -1,4 +1,4 @@
-import {weatherLabel,dayOffset,kstDate} from './core.js?v=0.7.10';
+import {weatherLabel,dayOffset,kstDate} from './core.js?v=0.7.11';
 export const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const valid=v=>typeof v==='number'&&Number.isFinite(v);
 export const unit=(v,u)=>valid(v)?`${v}${u}`:'—';
@@ -10,13 +10,13 @@ export function weatherIcon(label,night=false){
  const skyLight=night?moon:sun;
  const cloud='<path d="M11 37C0 36 2 23 11 22 11 8 32 7 35 23c15-2 15 16 3 16H12Z" fill="#c6cdd1" stroke="#a1aeb6" stroke-width="1.3"/>';
  const umbrella='<path d="M24 23v17c0 7-10 7-10 0" fill="none" stroke="#76ad2b" stroke-width="3"/><path d="M3 25C5 5 42 5 45 25c-6-5-10-5-14 0-5-5-10-5-14 0-5-5-9-5-14 0Z" fill="#8fc83d"/><path d="M24 7v4" stroke="#76ad2b" stroke-width="2"/><path d="m8 5-2 5m33-6-2 5" stroke="#4badd4" stroke-width="2.5"/>';
- const snowman='<g data-symbol="snowman"><path d="M13 29 5 23m30 6 8-6" stroke="#8a603e" stroke-width="2.2" stroke-linecap="round"/><ellipse cx="24" cy="34" rx="12" ry="11" fill="#f5fbff" stroke="#7fa9bd" stroke-width="1.7"/><circle cx="24" cy="17" r="8" fill="#f5fbff" stroke="#7fa9bd" stroke-width="1.7"/><path d="M17 23h14v4H17zM28 26h4v8h-4z" fill="#ed7d45"/><circle cx="21" cy="16" r="1.2" fill="#344e60"/><circle cx="27" cy="16" r="1.2" fill="#344e60"/><path d="m24 18 7 2-7 2Z" fill="#ed963a"/><circle cx="24" cy="32" r="1.5" fill="#52788f"/><circle cx="24" cy="38" r="1.5" fill="#52788f"/><path d="M17 9h14M20 9V4h8v5" fill="#4c8ba9" stroke="#4c8ba9" stroke-width="2.5" stroke-linecap="round"/></g>';
+ const snowman='<g data-symbol="snowman"><ellipse cx="24" cy="33" rx="15" ry="13" fill="#f5fbff" stroke="#7198ad" stroke-width="1.8"/><circle cx="24" cy="13" r="10" fill="#f5fbff" stroke="#7198ad" stroke-width="1.8"/><path d="M16 21h16v4H16zM29 24h4v9h-4z" fill="#ed7d45"/><circle cx="20.5" cy="12" r="1.3" fill="#344e60"/><circle cx="27.5" cy="12" r="1.3" fill="#344e60"/><path d="m24 14 8 2-8 2Z" fill="#ed963a"/></g>';
  const wet=/비|소나기/.test(label),snowy=/눈/.test(label),occasional=/한때|가끔/.test(label);
  // A sun with rain denotes an explicit intermittent forecast, never an inferred clearing.
  const intermittent=wet&&occasional&&!night?`<g data-symbol="intermittent-sun" transform="translate(22 0) scale(.52)">${sun}</g>`:'';
  let shape;
- if(wet&&snowy)shape=`${intermittent}<g data-symbol="rain" transform="translate(0 6) scale(.67)">${umbrella}</g><g transform="translate(20 15) scale(.57)">${snowman}</g>`;
- else if(wet)shape=`${intermittent}<g data-symbol="rain"${intermittent?' transform="translate(0 7) scale(.82)"':''}>${umbrella}</g>`;
+ if(wet&&snowy)shape=`${intermittent}<g data-symbol="rain">${umbrella}</g><g transform="translate(14 10) scale(.78)">${snowman}</g>`;
+ else if(wet)shape=`${intermittent}<g data-symbol="rain">${umbrella}</g>`;
  else if(snowy)shape=snowman;
  else shape=/맑/.test(label)?skyLight:/구름/.test(label)?`<g transform="translate(-1 -3) scale(.8)">${skyLight}</g>${cloud}`:cloud;
  const accessible=night&&/맑|구름/.test(label)?`${label} (밤)`:label;
