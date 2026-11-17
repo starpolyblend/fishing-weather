@@ -1,5 +1,5 @@
-import {recordDiagnostic} from './diagnostics.js?v=0.7.13';
-import {esc} from './daily.js?v=0.7.13';
+import {recordDiagnostic} from './diagnostics.js?v=0.7.11';
+import {esc} from './daily.js?v=0.7.11';
 export function createObservationView({request,demo,apiBase,onStatus=()=>{}}){
  const holder=document.querySelector('#observation'),batches=new Map(),pending=new Map();let serial=0,currentPlace='';
  const names={yeolhwa:'보성군(예당)',hyanggyo:'보성',songsan:'포두',sacho:'북일'};
