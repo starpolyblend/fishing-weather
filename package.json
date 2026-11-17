@@ -1,6 +1,6 @@
 {
   "name": "fishing-weather",
-  "version": "0.7.11",
+  "version": "0.7.13",
   "private": true,
   "type": "module",
   "scripts": {

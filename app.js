@@ -1,14 +1,14 @@
-import {createRecovery} from './recovery.js?v=0.7.11';
-import {createWaterPrefetch} from './water-prefetch.js?v=0.7.11';
-import {recordDiagnostic,diagnosticParams} from './diagnostics.js?v=0.7.11';
-import {isNight} from './daylight.js?v=0.7.11';
-import {createObservationView} from './observation.js?v=0.7.11';
-import {createTideView} from './tides.js?v=0.7.11';
-import {windArrow,windSpeed} from './wind.js?v=0.7.11';
-import {waterChart,bindWaterCharts} from './water-chart.js?v=0.7.11';
-import {dayOffset,grid,kstDate} from './core.js?v=0.7.11';
-import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.7.11';
-import {weatherLabel} from './core.js?v=0.7.11';
+import {createRecovery} from './recovery.js?v=0.7.13';
+import {createWaterPrefetch} from './water-prefetch.js?v=0.7.13';
+import {recordDiagnostic,diagnosticParams} from './diagnostics.js?v=0.7.13';
+import {isNight} from './daylight.js?v=0.7.13';
+import {createObservationView} from './observation.js?v=0.7.13';
+import {createTideView} from './tides.js?v=0.7.13';
+import {windArrow,windSpeed} from './wind.js?v=0.7.13';
+import {waterChart,bindWaterCharts} from './water-chart.js?v=0.7.13';
+import {dayOffset,grid,kstDate} from './core.js?v=0.7.13';
+import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.7.13';
+import {weatherLabel} from './core.js?v=0.7.13';
 const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),demo=new URLSearchParams(location.search).get('demo')==='1';
 const places=(cfg.locations||[]).slice(0,4),memory=new Map(),midMemory=new Map();
 let place=places.find(p=>p.id==='yeolhwa')||places[0],serial=0,selectedDate=kstDate().replaceAll('-',''),activeData=null,hourScroll=0;
@@ -64,7 +64,7 @@ async function jsonRequest(path,params){
  const failed=failedRequests.get(key);if(failed&&Date.now()<failed.until){recordDiagnostic({path,params:diagnosticParams(params),result:'COOLDOWN'});throw failed.error}
  const pending=(async()=>{const start=performance.now();let status=0,cache='',worker='',serverTiming='',cacheWarning='';try{
   const res=await fetch(url,{signal:AbortSignal.timeout(25000),cache:'no-store'});status=res.status;cache=res.headers.get('X-Data-Cache')||'';worker=res.headers.get('X-App-Version')||'';serverTiming=res.headers.get('Server-Timing')||'';cacheWarning=res.headers.get('X-Cache-Warning')||'';
-  const data=await res.json();if(!res.ok){const error=Error('자료 갱신이 지연됩니다. 잠시 후 다시 확인해 주세요.');error.code=/^[A-Z_]{1,40}$/.test(data.code||'')?data.code:'HTTP_ERROR';if(['CACHE_READ','UPSTREAM','CACHE_WRITE','RESPONSE'].includes(data.stage))error.stage=data.stage;if(['Error','TypeError','SyntaxError','RangeError','Other'].includes(data.eType))error.eType=data.eType;if(Number.isFinite(data.retryAfterMs))error.retryAfterMs=Math.max(0,Math.min(20000,data.retryAfterMs));if(Number.isInteger(data.upstreamStatus)&&data.upstreamStatus>=100&&data.upstreamStatus<=599)error.upstreamStatus=data.upstreamStatus;throw error}
+  const data=await res.json();if(path==='/api/water'&&data.waterDiagnostic)recordDiagnostic({path,params:diagnosticParams(params),result:'WATER_DETAIL',diagnostic:data.waterDiagnostic});if(!res.ok){const error=Error('자료 갱신이 지연됩니다. 잠시 후 다시 확인해 주세요.');error.code=/^[A-Z_]{1,40}$/.test(data.code||'')?data.code:'HTTP_ERROR';if(['CACHE_READ','UPSTREAM','CACHE_WRITE','RESPONSE'].includes(data.stage))error.stage=data.stage;if(['Error','TypeError','SyntaxError','RangeError','Other'].includes(data.eType))error.eType=data.eType;if(Number.isFinite(data.retryAfterMs))error.retryAfterMs=Math.max(0,Math.min(20000,data.retryAfterMs));if(Number.isInteger(data.upstreamStatus)&&data.upstreamStatus>=100&&data.upstreamStatus<=599)error.upstreamStatus=data.upstreamStatus;throw error}
   if(path==='/api/water'&&!data.stations?.some(s=>Number.isFinite(s.level))){const e=Error('수위 누락');e.code='WATER_NO_VALUE';throw e}
   failedRequests.delete(key);recordDiagnostic({path,params:diagnosticParams(params),status,cache,worker,serverTiming,cacheWarning,ms:Math.round(performance.now()-start),result:'OK',issuedAt:data.issuedAt,fetchedAt:data.fetchedAt});if(typeof requestStatus==='function')requestStatus(path,params,data);return data;
  }catch(e){const error=Error('자료 갱신이 지연됩니다. 잠시 후 다시 확인해 주세요.');error.code=['TimeoutError','AbortError'].includes(e.name)?'TIMEOUT':typeof e.code==='string'&&/^[A-Z_]{1,40}$/.test(e.code)?e.code:e instanceof TypeError?'NETWORK_OR_CORS':'INVALID_RESPONSE';
