@@ -1,4 +1,4 @@
-import {createRetryQueue} from './retry.js?v=0.7.9';
+import {createRetryQueue} from './retry.js?v=0.7.10';
 export function createRecovery({request,current,apply,diagnostic,visible,queueOptions={}}){
  const queue=createRetryQueue({visible,...queueOptions});
  function active(path,p,target){
