@@ -1,13 +1,14 @@
-import {createWaterPrefetch} from './water-prefetch.js?v=0.7.8';
-import {recordDiagnostic,diagnosticParams} from './diagnostics.js?v=0.7.8';
-import {isNight} from './daylight.js?v=0.7.8';
-import {createObservationView} from './observation.js?v=0.7.8';
-import {createTideView} from './tides.js?v=0.7.8';
-import {windArrow,windSpeed} from './wind.js?v=0.7.8';
-import {waterChart,bindWaterCharts} from './water-chart.js?v=0.7.8';
-import {dayOffset,grid,kstDate} from './core.js?v=0.7.8';
-import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.7.8';
-import {weatherLabel} from './core.js?v=0.7.8';
+import {createRecovery} from './recovery.js?v=0.7.9';
+import {createWaterPrefetch} from './water-prefetch.js?v=0.7.9';
+import {recordDiagnostic,diagnosticParams} from './diagnostics.js?v=0.7.9';
+import {isNight} from './daylight.js?v=0.7.9';
+import {createObservationView} from './observation.js?v=0.7.9';
+import {createTideView} from './tides.js?v=0.7.9';
+import {windArrow,windSpeed} from './wind.js?v=0.7.9';
+import {waterChart,bindWaterCharts} from './water-chart.js?v=0.7.9';
+import {dayOffset,grid,kstDate} from './core.js?v=0.7.9';
+import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.7.9';
+import {weatherLabel} from './core.js?v=0.7.9';
 const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),demo=new URLSearchParams(location.search).get('demo')==='1';
 const places=(cfg.locations||[]).slice(0,4),memory=new Map(),midMemory=new Map();
 let place=places.find(p=>p.id==='yeolhwa')||places[0],serial=0,selectedDate=kstDate().replaceAll('-',''),activeData=null,hourScroll=0;
@@ -25,15 +26,15 @@ function empty(title,message){return `<div class="empty"><h3>${esc(title)}</h3><
 $('#title').textContent=cfg.title;document.title=cfg.title;$('#today').textContent=dateLabel(kstDate());$('#demo').hidden=!demo;
 function renderPlaces(){$('#places').innerHTML=places.map(p=>`<button data-place="${esc(p.id)}" aria-pressed="${p.id===place?.id}">${esc(p.name)}</button>`).join('')}
 renderPlaces();
-$('#places').onclick=e=>{const b=e.target.closest('[data-place]');if(!b)return;place=places.find(p=>p.id===b.dataset.place);try{localStorage.setItem('fishing-place',place.id)}catch{}renderPlaces();load()};
+$('#places').onclick=e=>{const b=e.target.closest('[data-place]');if(!b)return;place=places.find(p=>p.id===b.dataset.place);try{localStorage.setItem('fishing-place',place.id)}catch{}renderPlaces();retryQueue.sync();load()};
 let activeTab='weather';
-document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{activeTab=b.dataset.tab;document.querySelectorAll('[data-tab]').forEach(x=>x.setAttribute('aria-pressed',x===b));for(const id of ['weather','water','tide'])$('#'+id).hidden=id!==activeTab;if(activeTab==='weather')load();else if(activeTab==='water')loadWater();else tideView.load()});
+document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{activeTab=b.dataset.tab;document.querySelectorAll('[data-tab]').forEach(x=>x.setAttribute('aria-pressed',x===b));for(const id of ['weather','water','tide'])$('#'+id).hidden=id!==activeTab;retryQueue.sync();if(activeTab==='weather')load();else if(activeTab==='water')loadWater();else tideView.load()});
 $('#refresh').onclick=()=>load(true);
 function render(data){
  activeData=data;const today=kstDate().replaceAll('-','');
  if(selectedDate<today||selectedDate>dayOffset(10).replaceAll('-','')){selectedDate=today;hourScroll=0}
  const previousDaily=$('.daily-scroll')?.scrollLeft||0;
- const warning=Date.now()-Date.parse(data.issuedAt)>21600000?'<p class="notice">6시간 이상 지난 예보입니다. 새로고침해 주세요.</p>':'';
+ const warning=Date.now()-Date.parse(data.issuedAt)>21600000?'<p class="notice">이전 예보 · 발표 시각을 확인해 주세요.</p>':'';
  $('#weather-content').innerHTML=warning+(place.approximate?'<p class="meta compact">마을 주변 기준 예보</p>':'')+dailyTable({...data,placeName:place.name},selectedDate)+`<p class="table-legend"><span class="low">최저</span> / <span class="high">최고</span> · 날짜를 누르면 시간별 예보</p><p class="mid-status">${data.midError?esc(data.midError):data.midLoading?'중기예보 불러오는 중…':''}</p><div class="timeline-heading hourly-heading"><h2>시간별 예보</h2><span id="selected-date">${dateText(selectedDate)}</span></div><div id="hourly-content"></div><details class="forecast-notes"><summary>예보 기준·발표 시각</summary><p>기온은 하루 최저·최고 예보입니다. 오전·오후 기온이 아닙니다. 값이 없으면 —로 표시합니다.</p><p>단기 강수확률은 해당 오전·오후 시간별 예보의 최대값입니다. 강수량은 시간별 예보에서 확인하세요.</p><p>풍향 이름은 바람이 불어오는 쪽이며, 화살표는 향하는 쪽입니다. 예: 북풍 ↓, 서풍 →. 먼 날짜의 풍속은 기상청 정성예보(약함·약간 강함·강함)로 표시합니다.</p><p>중기예보는 광주·전남 날씨와 해당 시군 기온입니다. +8~10일은 종일 예보이며, 중기 강수량과 시간별 예보는 제공되지 않습니다.</p><p>${data.dailyMinimumSupplement?`오늘 최저기온은 ${esc(data.dailyMinimumSupplement.issuedAt.slice(5,16).replace('T',' '))} 발표 예보로 보완했습니다.`:''}</p><p>${data.dailyMaximumSupplement?`오늘 최고기온은 ${esc(data.dailyMaximumSupplement.issuedAt.slice(5,16).replace('T',' '))} 발표 예보로 보완했습니다.`:''}</p><p>단기 ${esc(data.issuedAt?.slice(5,16).replace('T',' '))}${data.mid?.issuedAt?` / 중기 ${esc(data.mid.issuedAt.slice(5,16).replace('T',' '))}`:''} 발표 · 기상청</p></details>`;
  $('.daily-scroll').scrollLeft=previousDaily;
  document.querySelectorAll('[data-date]').forEach(b=>b.onclick=()=>{
@@ -65,15 +66,32 @@ async function jsonRequest(path,params){
   const res=await fetch(url,{signal:AbortSignal.timeout(25000),cache:'no-store'});status=res.status;cache=res.headers.get('X-Data-Cache')||'';worker=res.headers.get('X-App-Version')||'';serverTiming=res.headers.get('Server-Timing')||'';cacheWarning=res.headers.get('X-Cache-Warning')||'';
   const data=await res.json();if(!res.ok){const error=Error('자료 갱신이 지연됩니다. 잠시 후 다시 확인해 주세요.');error.code=/^[A-Z_]{1,40}$/.test(data.code||'')?data.code:'HTTP_ERROR';if(['CACHE_READ','UPSTREAM','CACHE_WRITE','RESPONSE'].includes(data.stage))error.stage=data.stage;if(['Error','TypeError','SyntaxError','RangeError','Other'].includes(data.eType))error.eType=data.eType;if(Number.isFinite(data.retryAfterMs))error.retryAfterMs=Math.max(0,Math.min(20000,data.retryAfterMs));if(Number.isInteger(data.upstreamStatus)&&data.upstreamStatus>=100&&data.upstreamStatus<=599)error.upstreamStatus=data.upstreamStatus;throw error}
   if(path==='/api/water'&&!data.stations?.some(s=>Number.isFinite(s.level))){const e=Error('수위 누락');e.code='WATER_NO_VALUE';throw e}
-  failedRequests.delete(key);recordDiagnostic({path,params:diagnosticParams(params),status,cache,worker,serverTiming,cacheWarning,ms:Math.round(performance.now()-start),result:'OK',issuedAt:data.issuedAt,fetchedAt:data.fetchedAt});return data;
+  failedRequests.delete(key);recordDiagnostic({path,params:diagnosticParams(params),status,cache,worker,serverTiming,cacheWarning,ms:Math.round(performance.now()-start),result:'OK',issuedAt:data.issuedAt,fetchedAt:data.fetchedAt});if(typeof requestStatus==='function')requestStatus(path,params,data);return data;
  }catch(e){const error=Error('자료 갱신이 지연됩니다. 잠시 후 다시 확인해 주세요.');error.code=['TimeoutError','AbortError'].includes(e.name)?'TIMEOUT':typeof e.code==='string'&&/^[A-Z_]{1,40}$/.test(e.code)?e.code:e instanceof TypeError?'NETWORK_OR_CORS':'INVALID_RESPONSE';
-  failedRequests.set(key,{until:Date.now()+(Number.isFinite(e.retryAfterMs)?e.retryAfterMs:20000),error});if(failedRequests.size>100)failedRequests.delete(failedRequests.keys().next().value);
-  recordDiagnostic({path,params:diagnosticParams(params),status,cache,worker,serverTiming,cacheWarning,ms:Math.round(performance.now()-start),upstreamStatus:e.upstreamStatus,stage:e.stage,eType:e.eType,result:error.code});throw error;
+  failedRequests.set(key,{until:Date.now()+(Number.isFinite(e.retryAfterMs)?e.retryAfterMs:5000),error});if(failedRequests.size>100)failedRequests.delete(failedRequests.keys().next().value);
+  recordDiagnostic({path,params:diagnosticParams(params),status,cache,worker,serverTiming,cacheWarning,ms:Math.round(performance.now()-start),upstreamStatus:e.upstreamStatus,stage:e.stage,eType:e.eType,result:error.code});if(typeof requestStatus==='function')requestStatus(path,params,null,e.retryAfterMs);throw error;
  }})();
  pendingRequests.set(key,pending);try{return await pending}finally{pendingRequests.delete(key)}
 }
 const extremesMemory=new Map();
-const observationView=createObservationView({request:jsonRequest,demo,apiBase:cfg.apiBase});
+const observationView=createObservationView({request:jsonRequest,demo,apiBase:cfg.apiBase,onStatus:requestStatus});
+const retryQueue=createRecovery({request:jsonRequest,visible:()=>!demo&&!document.hidden&&navigator.onLine!==false,
+ current:()=>{const g=place?grid(place.lat,place.lng):{};return {tab:activeTab,place:place?.id,region:place?.midRegion,...g,station:waterSelection,today:kstDate(),yesterday:dayOffset(-1).replaceAll('-',''),tideStart:dayOffset(-1).replaceAll('-',''),tideEnd:dayOffset(9).replaceAll('-','')}},
+ diagnostic:recordDiagnostic,
+ apply:async(path,p,d)=>{
+  if(path.startsWith('/api/observation')){observationView.accept(path.endsWith('yesterday')?'yesterday':'today',d);return}
+  if(path==='/api/tide'){await tideView.accept(p.date,d);return}
+  if(path==='/api/water'){const s=d.stations?.find(s=>s.id===p.station);if(!Number.isFinite(s?.level)||!Array.isArray(s.history))return;remember(waterMemory,'water',p.station,s);await loadWater();return}
+  if(path==='/api/water-chart'){if(d.station!==p.station||!d.officialChart)return;remember(chartMemory,'chart',p.station,d);await loadWater();return}
+  if(path==='/api/weather'){if(!Array.isArray(d.rows))return;remember(memory,'weather',`${p.nx},${p.ny}`,d)}
+  else if(path==='/api/mid'){if(!Array.isArray(d.days))return;remember(midMemory,'mid',p.region,d)}
+  else if(path==='/api/weather-extremes'){remember(extremesMemory,'extremes',`${p.nx},${p.ny}`,d)}
+  await load();
+ }
+});
+function requestStatus(path,p,d,minimum){retryQueue.status(path,p,d,minimum)}
+window.addEventListener('online',()=>retryQueue.sync());
+
 async function load(force=false){
  void observationView.load(place?.id,force);
  const ticket=++serial;$('#refresh').disabled=false;
@@ -119,7 +137,7 @@ function renderWaterButtons(){
  $('#water-places').innerHTML=[['4007625','보성강댐'],['4007630','가장교']].map(([id,name])=>`<button data-water="${id}" aria-pressed="${id===waterSelection}">${name}</button>`).join('');
 }
 renderWaterButtons();
-$('#water-places').onclick=e=>{const b=e.target.closest('[data-water]');if(!b)return;waterSelection=b.dataset.water;try{localStorage.setItem('fishing-water-station',waterSelection)}catch{}renderWaterButtons();loadWater()};
+$('#water-places').onclick=e=>{const b=e.target.closest('[data-water]');if(!b)return;waterSelection=b.dataset.water;try{localStorage.setItem('fishing-water-station',waterSelection)}catch{}renderWaterButtons();retryQueue.sync();loadWater()};
 function renderWater(){
  const s=waterData?.stations.find(s=>s.id===waterSelection);if(!s){$('#water-content').innerHTML=empty('수위 자료가 없습니다.','잠시 후 새로고침해 주세요.');return}
  const old=s.observedAt&&Date.now()-Date.parse(s.observedAt)>3600000;
@@ -159,5 +177,5 @@ async function loadWater(force=false){
 $('#water-refresh').onclick=()=>loadWater(true);
 const tideView=createTideView({request:jsonRequest,apiBase:cfg.apiBase,demo});
 $('#tide-refresh').onclick=()=>tideView.load(true);
-document.addEventListener('visibilitychange',()=>{if(!document.hidden){$('#today').textContent=dateLabel(kstDate());if(activeTab==='weather')load();else if(activeTab==='water')loadWater();else tideView.load()}});
+document.addEventListener('visibilitychange',()=>{retryQueue.sync();if(!document.hidden){$('#today').textContent=dateLabel(kstDate());if(activeTab==='weather')load();else if(activeTab==='water')loadWater();else tideView.load()}});
 load();

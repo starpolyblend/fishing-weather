@@ -273,6 +273,12 @@ async function fetchTideApi(date,env){
 
 const observationStations={"yeolhwa": {"id": "258", "name": "보성군", "lat": 34.76335, "lon": 127.21226, "distanceKm": 2.2, "sido": "1200000000"}, "hyanggyo": {"id": "732", "name": "보성", "lat": 34.76192, "lon": 127.09209, "distanceKm": 1.1, "sido": "1200000000"}, "songsan": {"id": "767", "name": "포두", "lat": 34.58853, "lon": 127.39745, "distanceKm": 4.2, "sido": "1200000000"}, "sacho": {"id": "785", "name": "북일", "lat": 34.46383, "lon": 126.6763, "distanceKm": 5.5, "sido": "1200000000"}};
 
+function observationDiagnostic(row,station,at,rain,rainDash,reason){
+ const raw=row?.awsPcpDay,tm=String(row?.tm??'');
+ return {stationId:station.id,rowFound:!!row,rawTime:/^\d{8,14}$/.test(tm)?tm:null,
+  rawTimeType:row?typeof row.tm:'missing',rawRain:raw==null?null:/^[\d.\s+-]{1,24}$/.test(String(raw))?String(raw):'[other]',
+  rawRainType:raw==null?'missing':typeof raw,observedAt:at,rain,rainDash,reason};
+}
 async function fetchObservations(){
  const url='https://www.weather.go.kr/w/observation/land/aws-obs-data.do?db=MINDB_01M&tm=&stnId=0&sidoCode=1200000000&sort=&config=';
  let data;
@@ -294,7 +300,8 @@ async function fetchObservations(){
   // Missing values and yesterday's totals are never represented as today's zero.
   const rainDash=!!sameDay&&String(row?.awsPcpDay??'').trim()==='-';
   const rain=sameDay&&n!==null&&n>=0?n:null;
-  observations[place]={station,observedAt:valid?at:null,rain,rainDash,delayed:!valid||Date.now()-Date.parse(at)>1800000,
+  const reason=!row?'STATION_MISSING':!valid?'INVALID_TIME':!sameDay?'WRONG_DAY':rain===null&&!rainDash?'RAIN_MISSING':Date.now()-Date.parse(at)>1800000?'OBSERVATION_OLD':'OK';
+  observations[place]={diagnostic:observationDiagnostic(row,station,valid?at:null,rain,rainDash,reason),station,observedAt:valid?at:null,rain,rainDash,delayed:!valid||Date.now()-Date.parse(at)>1800000,
    message:!row?'관측자료 확인 불가':!sameDay?'오늘 관측자료 확인 불가':rain===null&&!rainDash?'일강수량 확인 불가':'',
    sourceUrl:'https://www.weather.go.kr/w/observation/land/aws-obs.do'};
  }
@@ -313,7 +320,8 @@ async function fetchYesterdayObservations(date){
  for(const [place,station] of Object.entries(observationStations)){
   const row=data.items.find(r=>String(r.awsStnId)===station.id&&String(r.tm)===date);
   const n=numberOrNull(row?.awsPcpDay);
-  observations[place]={date,rain:n!==null&&n>=0?n:null,rainDash:String(row?.awsPcpDay??'').trim()==='-'};
+  const rain=n!==null&&n>=0?n:null,rainDash=String(row?.awsPcpDay??'').trim()==='-';
+  observations[place]={date,rain,rainDash,diagnostic:observationDiagnostic(row,station,null,rain,rainDash,!row?'STATION_OR_DATE_MISSING':rain===null&&!rainDash?'RAIN_MISSING':'OK')};
  }
  return {observations};
 }
@@ -339,7 +347,7 @@ async function shared(key,task){
   // Unknown internal exceptions must not poison later requests.
   if(error.status&&error.code&&error.code!=='WATER_INTERNAL'){
    if(failedUpstream.size>=128)failedUpstream.delete(failedUpstream.keys().next().value);
-   failedUpstream.set(key,{until:Date.now()+20000,status:error.status,code:error.code,upstreamStatus:error.upstreamStatus});error.retryAfterMs=20000;
+   failedUpstream.set(key,{until:Date.now()+5000,status:error.status,code:error.code,upstreamStatus:error.upstreamStatus});error.retryAfterMs=5000;
   }
   throw error;
  }
@@ -371,14 +379,14 @@ export default {
   async fetch(request,env,ctx){
     const started=Date.now();
     const origin=request.headers.get('Origin')||'',allowed=(env.ALLOWED_ORIGINS||'').split(',').map(s=>s.trim()).filter(Boolean);
-    const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Vary':'Origin','X-Content-Type-Options':'nosniff','X-App-Version':'0.7.8','Access-Control-Expose-Headers':'Server-Timing, X-Data-Cache, X-App-Version, X-Cache-Warning'};
+    const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Vary':'Origin','X-Content-Type-Options':'nosniff','X-App-Version':'0.7.9','Access-Control-Expose-Headers':'Server-Timing, X-Data-Cache, X-App-Version, X-Cache-Warning'};
     const respond=(data,status=200)=>{if(status>=400&&!data.code)data={...data,code:status===429?'RATE_LIMIT':status===403?'AUTH':status===400?'BAD_REQUEST':'UPSTREAM'};headers['Server-Timing']=`worker;dur=${Date.now()-started}`;return new Response(JSON.stringify(data),{status,headers})};
     if(origin&&!allowed.includes(origin))return respond({message:'허용된 사이트 주소를 확인해 주세요.'},403);
     if(origin)headers['Access-Control-Allow-Origin']=origin;
     if(request.method==='OPTIONS'){headers['Access-Control-Allow-Methods']='GET, OPTIONS';return new Response(null,{status:204,headers});}
     if(request.method!=='GET')return respond({message:'GET 요청만 지원합니다.'},405);
     const url=new URL(request.url);
-    if(url.pathname==='/api/health')return respond({ok:true,version:'0.7.8',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
+    if(url.pathname==='/api/health')return respond({ok:true,version:'0.7.9',weatherKeyConfigured:!!env.KMA_SERVICE_KEY,originsConfigured:allowed.length>0});
 
 
     if(url.pathname==='/api/observation-yesterday'){
@@ -386,10 +394,10 @@ export default {
       if(place!=='all'&&!Object.hasOwn(observationStations,place))return respond({message:'관측 장소를 확인해 주세요.'},400);
       const date=new Date(Date.now()+32400000-86400000).toISOString().slice(0,10).replaceAll('-','');
       try{
-        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/yesterday-observation-v1/${date}`);
+        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/yesterday-observation-v2/${date}`);
         const hit=await safeCacheMatch(key,ctx);
         const data=hit?await hit.json():await shared(key.url,()=>fetchYesterdayObservations(date));
-        if(!hit)saveCache(key,data,Object.values(data.observations).every(d=>d.rain!==null||d.rainDash)?3600:60,ctx);
+        if(!hit)saveCache(key,data,Object.values(data.observations).every(d=>d.rain!==null||d.rainDash)?3600:5,ctx);
         headers['X-Data-Cache']=hit?'hit':'miss';return respond(place==='all'?{...data,date}:data.observations[place]);
       }catch{return respond({date,message:'어제 관측자료 확인 불가'},502);}
     }
@@ -398,10 +406,10 @@ export default {
       if(place!=='all'&&!Object.hasOwn(observationStations,place))return respond({message:'관측 장소를 확인해 주세요.'},400);
       try{
         const day=new Date(Date.now()+32400000).toISOString().slice(0,10);
-        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/observations-v3/${day}`);
+        const cache=globalThis.caches?.default,key=new Request(`${url.origin}/cache/observations-v4/${day}`);
         const hit=await safeCacheMatch(key,ctx);
         const data=hit?await hit.json():await shared(key.url,fetchObservations);
-        if(!hit){const complete=Object.values(data.observations).every(d=>d.observedAt?.slice(0,10)===day&&!d.delayed&&(Number.isFinite(d.rain)||d.rainDash));saveCache(key,data,complete?300:60,ctx);}
+        if(!hit){const complete=Object.values(data.observations).every(d=>d.observedAt?.slice(0,10)===day&&!d.delayed&&(Number.isFinite(d.rain)||d.rainDash));saveCache(key,data,complete?300:5,ctx);}
         headers['X-Data-Cache']=hit?'hit':'miss';return respond(place==='all'?data:{...data.observations[place],fetchedAt:data.fetchedAt});
       }catch(e){return respond({retryAfterMs:e.retryAfterMs,station:observationStations[place],message:e.status?e.message:'관측자료 확인 불가'},e.status||502);}
     }
@@ -451,7 +459,7 @@ export default {
         stage='CACHE_WRITE';if(chartOnly||data.stations.every(s=>s.level!==null))saveCache(key,data,chartOnly?1800:300,ctx);
         stage='RESPONSE';
         return respond(data);
-      }catch(e){if(e.cooldown)headers['X-Data-Cache']='failure-cooldown';return respond({message:'수문자료 갱신이 지연됩니다.',code:e.code||'WATER_INTERNAL',stage,retryAfterMs:e.retryAfterMs??20000,eType:['Error','TypeError','SyntaxError','RangeError'].includes(e.name)?e.name:'Other',...(e.upstreamStatus?{upstreamStatus:e.upstreamStatus}:{})},502);}
+      }catch(e){if(e.cooldown)headers['X-Data-Cache']='failure-cooldown';return respond({message:'수문자료 갱신이 지연됩니다.',code:e.code||'WATER_INTERNAL',stage,retryAfterMs:e.retryAfterMs??5000,eType:['Error','TypeError','SyntaxError','RangeError'].includes(e.name)?e.name:'Other',...(e.upstreamStatus?{upstreamStatus:e.upstreamStatus}:{})},502);}
     }
     if(!['/api/weather','/api/weather-extremes'].includes(url.pathname))return respond({message:'주소를 확인해 주세요.'},404);
     if(!env.KMA_SERVICE_KEY)return respond({message:'날씨 연결을 준비하고 있습니다.'},503);
@@ -476,7 +484,7 @@ export default {
        const day=today.replaceAll('-','');
        const complete=[['tmin','dailyMinimumSupplement'],['tmax','dailyMaximumSupplement']].every(([field,name])=>data.rows.some(r=>r.date===day&&Number.isFinite(r[field]))||Number.isFinite(data[name]?.value));
        result={issuedAt:data.issuedAt,dailyMinimumSupplement:data.dailyMinimumSupplement||null,dailyMaximumSupplement:data.dailyMaximumSupplement||null,retryAfterMs:complete?300000:60000};
-       saveCache(supplementKey,result,complete?300:60,ctx);
+       saveCache(supplementKey,result,complete?300:5,ctx);
       }
       return respond(result);
     }catch(e){return respond({message:e.status?e.message:'자료를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.',retryAfterMs:e.retryAfterMs,code:e.code||'UPSTREAM'},e.status||502);}

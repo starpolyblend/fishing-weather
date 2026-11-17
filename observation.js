@@ -1,6 +1,6 @@
-import {recordDiagnostic} from './diagnostics.js?v=0.7.8';
-import {esc} from './daily.js?v=0.7.8';
-export function createObservationView({request,demo,apiBase}){
+import {recordDiagnostic} from './diagnostics.js?v=0.7.9';
+import {esc} from './daily.js?v=0.7.9';
+export function createObservationView({request,demo,apiBase,onStatus=()=>{}}){
  const holder=document.querySelector('#observation'),batches=new Map(),pending=new Map();let serial=0,currentPlace='';
  const names={yeolhwa:'보성군(예당)',hyanggyo:'보성',songsan:'포두',sacho:'북일'};
  const day=n=>new Date(Date.now()+32400000+n*86400000).toISOString().slice(0,10);
@@ -10,16 +10,12 @@ export function createObservationView({request,demo,apiBase}){
   if(!batches.has(kind))try{const d=JSON.parse(localStorage.getItem(storage(kind)));if(d?.date===day(kind==='yesterday'?-1:0)&&d?.observations&&Number.isFinite(d.at))batches.set(kind,d)}catch{}
   const entry=batches.get(kind);return entry?.date===day(kind==='yesterday'?-1:0)?entry:null;
  }
- async function fetchBatch(kind,force){
-  if(pending.has(kind))return pending.get(kind);
-  const old=read(kind),ttl=kind==='yesterday'?3600000:300000;
-  if(!force&&old&&Date.now()-old.at>=0&&Date.now()-old.at<ttl)return old;
-  const date=day(kind==='yesterday'?-1:0);
-  const task=(async()=>{
-   const data=await request(kind==='yesterday'?'/api/observation-yesterday':'/api/observation',{place:'all'});
+ function accept(kind,data){
+  const old=read(kind),ttl=kind==='yesterday'?3600000:300000,date=day(kind==='yesterday'?-1:0);
    if(!data.observations||kind==='yesterday'&&data.date!==date.replaceAll('-',''))throw Error('OBSERVATION_FORMAT');
    const observations={};for(const id of Object.keys(names)){
     const next=data.observations[id];
+    recordDiagnostic({path:kind==='yesterday'?'/api/observation-yesterday':'/api/observation',result:'OBSERVATION_DETAIL',place:id,diagnostic:next?.diagnostic||{reason:'DIAGNOSTIC_UNAVAILABLE'},displayReason:valid(next)&&(kind==='yesterday'||next.observedAt?.slice(0,10)===date)?next.delayed?'OBSERVATION_OLD':'CURRENT':valid(old?.observations[id])?'PREVIOUS_RETAINED':'NO_USABLE_DATA',previousObservedAt:old?.observations[id]?.observedAt});
     const usable=valid(next)&&(kind==='yesterday'||next.observedAt?.slice(0,10)===date);
     observations[id]=usable?next:valid(old?.observations[id])?{...old.observations[id],stale:true}:next;
    }
@@ -28,6 +24,15 @@ export function createObservationView({request,demo,apiBase}){
    // Partial data is retried after a minute, while retaining valid station readings.
    const entry={date,at:Date.now()-(complete?0:ttl-60000),observations};batches.set(kind,entry);
    try{localStorage.setItem(storage(kind),JSON.stringify(entry))}catch{}return entry;
+ }
+ async function fetchBatch(kind,force){
+  if(pending.has(kind))return pending.get(kind);
+  const old=read(kind),ttl=kind==='yesterday'?3600000:300000;
+  if(!force&&old&&Date.now()-old.at>=0&&Date.now()-old.at<ttl){onStatus(kind==='yesterday'?'/api/observation-yesterday':'/api/observation',{place:'all'},{...old,date:old.date.replaceAll('-','')});return old;}
+  const date=day(kind==='yesterday'?-1:0);
+  const task=(async()=>{
+   const data=await request(kind==='yesterday'?'/api/observation-yesterday':'/api/observation',{place:'all'});
+   return accept(kind,data);
   })();pending.set(kind,task);try{return await task}finally{pending.delete(kind)}
  }
  function paint(){
@@ -44,5 +49,5 @@ export function createObservationView({request,demo,apiBase}){
   if(read('today'))paint();else holder.innerHTML=`<p class="observation-meta">${esc(names[place]||'관측지점')} 관측 · 강수량 확인 중…</p>`;
   await Promise.allSettled(['today','yesterday'].map(async kind=>{try{await fetchBatch(kind,force)}finally{if(ticket===serial)paint()}}));
  }
- return {load};
+ return {load,accept(kind,data){accept(kind,data);paint()}};
 }

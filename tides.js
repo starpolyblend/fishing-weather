@@ -1,4 +1,4 @@
-import {esc} from './daily.js?v=0.7.8';
+import {esc} from './daily.js?v=0.7.9';
 const names={'한물':'1물','두물':'2물','세물':'3물','네물':'4물','다섯물':'5물','여섯물':'6물','일곱물':'7물','여덟물':'8물','아홉물':'9물','열물':'10물','열한물':'11물','열두물':'12물','열셋물':'13물','열세물':'13물','열넷물':'14물','열네물':'14물','조금':'조금'};
 const todayKey=()=>new Date(Date.now()+32400000).toISOString().slice(0,10).replaceAll('-','');
 function offset(date,n){const d=new Date(`${date.slice(0,4)}-${date.slice(4,6)}-${date.slice(6,8)}T12:00:00+09:00`);return new Date(+d+n*86400000+32400000).toISOString().slice(0,10).replaceAll('-','')}
@@ -16,7 +16,7 @@ function enrich(days){
  return lookup;
 }
 export function createTideView({request,apiBase,demo}){
- const content=document.querySelector('#tide-content'),refresh=document.querySelector('#tide-refresh');let serial=0,dayKey='',memory=new Map();
+ const content=document.querySelector('#tide-content'),refresh=document.querySelector('#tide-refresh');let serial=0,dayKey='',memory=new Map(),acceptRender=()=>{};
  const storageKey=i=>`fishing-tide-api-v3:${apiBase}:${i}`;
  async function load(force=false){
   const ticket=++serial,today=todayKey();if(dayKey!==today){dayKey=today;for(const date of memory.keys())if(date<offset(today,-1)||date>offset(today,9))memory.delete(date)}
@@ -45,6 +45,7 @@ export function createTideView({request,apiBase,demo}){
    const fetched=[...records.values()].map(d=>d.fetchedAt).filter(Boolean).sort()[0];
    content.innerHTML=`${pending?`<p class="loading-note">${records.size?'저장된 자료부터 표시 · 최신 물때 확인 중…':'물때를 가져오는 중입니다…'}</p>`:''}${errors.length?`<p class="notice">일부 물때 갱신 지연</p>`:''}<p class="tide-table-note">오늘부터 10일 · 남해 8물때식</p><table class="tide-table"><caption class="sr-only">안남리 기준 10일 물때표. 각 시각 아래 높이와 직전 대비 증감은 cm입니다.</caption><colgroup><col class="tide-date-col"><col class="tide-mool-col"><col><col></colgroup><thead><tr><th scope="col">날짜</th><th scope="col">물때</th><th scope="col">▲ 만조</th><th scope="col">▼ 간조</th></tr></thead><tbody>${rows}</tbody></table><p class="meta">+ / − : 직전 간조·만조와의 높이 차이${fetched?`<br>자료 조회 ${esc(new Date(fetched).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}))}`:''}</p>`;
   };
+  acceptRender=(date,data)=>{const i=starts.indexOf(date);if(i<0)return;records.set(date,data);states[i]='done';if(!states.includes('error'))errors.length=0;render()};
   refresh.disabled=true;render();
   let cursor=0,stop=false;
   const run=async()=>{
@@ -65,5 +66,5 @@ export function createTideView({request,apiBase,demo}){
   await Promise.allSettled([run(),run(),run()]);
   if(ticket===serial)refresh.disabled=false;
  }
- return {load};
+ return {load,accept(date,data){if(data?.date!==date||data.station?.id!=='SO_0757'||data.days?.length!==1||data.days[0].date!==date)return;const entry={at:Date.now(),data};memory.set(date,entry);try{localStorage.setItem(storageKey(date),JSON.stringify(entry))}catch{}acceptRender(date,data)}};
 }
