@@ -1,14 +1,14 @@
-import {createRecovery} from './recovery.js?v=0.7.11';
-import {createWaterPrefetch} from './water-prefetch.js?v=0.7.11';
-import {recordDiagnostic,diagnosticParams} from './diagnostics.js?v=0.7.11';
-import {isNight} from './daylight.js?v=0.7.11';
-import {createObservationView} from './observation.js?v=0.7.11';
-import {createTideView} from './tides.js?v=0.7.11';
-import {windArrow,windSpeed} from './wind.js?v=0.7.11';
-import {waterChart,bindWaterCharts} from './water-chart.js?v=0.7.11';
-import {dayOffset,grid,kstDate} from './core.js?v=0.7.11';
-import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.7.11';
-import {weatherLabel} from './core.js?v=0.7.11';
+import {createRecovery} from './recovery.js?v=0.7.14';
+import {createWaterPrefetch} from './water-prefetch.js?v=0.7.14';
+import {recordDiagnostic,diagnosticParams} from './diagnostics.js?v=0.7.14';
+import {isNight} from './daylight.js?v=0.7.14';
+import {createObservationView} from './observation.js?v=0.7.14';
+import {createTideView} from './tides.js?v=0.7.14';
+import {windArrow,windSpeed} from './wind.js?v=0.7.14';
+import {waterChart,bindWaterCharts} from './water-chart.js?v=0.7.14';
+import {dayOffset,grid,kstDate} from './core.js?v=0.7.14';
+import {dailyTable,dateText,weatherIcon,rainDisplay,rainMarkup,unit,esc} from './daily.js?v=0.7.14';
+import {weatherLabel} from './core.js?v=0.7.14';
 const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),demo=new URLSearchParams(location.search).get('demo')==='1';
 const places=(cfg.locations||[]).slice(0,4),memory=new Map(),midMemory=new Map();
 let place=places.find(p=>p.id==='yeolhwa')||places[0],serial=0,selectedDate=kstDate().replaceAll('-',''),activeData=null,hourScroll=0;
@@ -35,7 +35,7 @@ function render(data){
  if(selectedDate<today||selectedDate>dayOffset(10).replaceAll('-','')){selectedDate=today;hourScroll=0}
  const previousDaily=$('.daily-scroll')?.scrollLeft||0;
  const warning=Date.now()-Date.parse(data.issuedAt)>21600000?'<p class="notice">이전 예보 · 발표 시각을 확인해 주세요.</p>':'';
- $('#weather-content').innerHTML=warning+(place.approximate?'<p class="meta compact">마을 주변 기준 예보</p>':'')+dailyTable({...data,placeName:place.name},selectedDate)+`<p class="table-legend"><span class="low">최저</span> / <span class="high">최고</span> · 날짜를 누르면 시간별 예보</p><p class="mid-status">${data.midError?esc(data.midError):data.midLoading?'중기예보 불러오는 중…':''}</p><div class="timeline-heading hourly-heading"><h2>시간별 예보</h2><span id="selected-date">${dateText(selectedDate)}</span></div><div id="hourly-content"></div><details class="forecast-notes"><summary>예보 기준·발표 시각</summary><p>기온은 하루 최저·최고 예보입니다. 오전·오후 기온이 아닙니다. 값이 없으면 —로 표시합니다.</p><p>단기 강수확률은 해당 오전·오후 시간별 예보의 최대값입니다. 강수량은 시간별 예보에서 확인하세요.</p><p>풍향 이름은 바람이 불어오는 쪽이며, 화살표는 향하는 쪽입니다. 예: 북풍 ↓, 서풍 →. 먼 날짜의 풍속은 기상청 정성예보(약함·약간 강함·강함)로 표시합니다.</p><p>중기예보는 광주·전남 날씨와 해당 시군 기온입니다. +8~10일은 종일 예보이며, 중기 강수량과 시간별 예보는 제공되지 않습니다.</p><p>${data.dailyMinimumSupplement?`오늘 최저기온은 ${esc(data.dailyMinimumSupplement.issuedAt.slice(5,16).replace('T',' '))} 발표 예보로 보완했습니다.`:''}</p><p>${data.dailyMaximumSupplement?`오늘 최고기온은 ${esc(data.dailyMaximumSupplement.issuedAt.slice(5,16).replace('T',' '))} 발표 예보로 보완했습니다.`:''}</p><p>단기 ${esc(data.issuedAt?.slice(5,16).replace('T',' '))}${data.mid?.issuedAt?` / 중기 ${esc(data.mid.issuedAt.slice(5,16).replace('T',' '))}`:''} 발표 · 기상청</p></details>`;
+ $('#weather-content').innerHTML=warning+dailyTable({...data,placeName:place.name},selectedDate)+`<p class="table-legend"><span class="low">최저</span> / <span class="high">최고</span> · 날짜를 누르면 시간별 예보</p><p class="mid-status">${data.midError?esc(data.midError):data.midLoading?'중기예보 불러오는 중…':''}</p><div class="timeline-heading hourly-heading"><h2>시간별 예보</h2><span id="selected-date">${dateText(selectedDate)}</span></div><div id="hourly-content"></div><details class="forecast-notes"><summary>예보 기준·발표 시각</summary><p>기온은 하루 최저·최고 예보입니다. 오전·오후 기온이 아닙니다. 값이 없으면 —로 표시합니다.</p><p>‘일부 시간 비·눈’은 해당 오전·오후에 연속 6시간 이상의 자료가 있고 강수 시간이 절반 이하일 때 표시하는 자체 요약입니다. 기상청의 공식 ‘한때·가끔’ 구분과 다를 수 있습니다.</p><p>단기 강수확률은 해당 오전·오후 시간별 예보의 최대값입니다. 강수량은 시간별 예보에서 확인하세요.</p><p>풍향 이름은 바람이 불어오는 쪽이며, 화살표는 향하는 쪽입니다. 예: 북풍 ↓, 서풍 →. 먼 날짜의 풍속은 기상청 정성예보(약함·약간 강함·강함)로 표시합니다.</p><p>중기예보는 광주·전남 날씨와 해당 시군 기온입니다. +8~10일은 종일 예보이며, 중기 강수량과 시간별 예보는 제공되지 않습니다.</p><p>${data.dailyMinimumSupplement?`오늘 최저기온은 ${esc(data.dailyMinimumSupplement.issuedAt.slice(5,16).replace('T',' '))} 발표 예보로 보완했습니다.`:''}</p><p>${data.dailyMaximumSupplement?`오늘 최고기온은 ${esc(data.dailyMaximumSupplement.issuedAt.slice(5,16).replace('T',' '))} 발표 예보로 보완했습니다.`:''}</p><p>단기 ${esc(data.issuedAt?.slice(5,16).replace('T',' '))}${data.mid?.issuedAt?` / 중기 ${esc(data.mid.issuedAt.slice(5,16).replace('T',' '))}`:''} 발표 · 기상청</p></details>`;
  $('.daily-scroll').scrollLeft=previousDaily;
  document.querySelectorAll('[data-date]').forEach(b=>b.onclick=()=>{
   selectedDate=b.dataset.date;hourScroll=0;

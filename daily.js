@@ -1,4 +1,4 @@
-import {weatherLabel,dayOffset,kstDate} from './core.js?v=0.7.11';
+import {weatherLabel,dayOffset,kstDate} from './core.js?v=0.7.14';
 export const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const valid=v=>typeof v==='number'&&Number.isFinite(v);
 export const unit=(v,u)=>valid(v)?`${v}${u}`:'—';
@@ -10,13 +10,15 @@ export function weatherIcon(label,night=false){
  const skyLight=night?moon:sun;
  const cloud='<path d="M11 37C0 36 2 23 11 22 11 8 32 7 35 23c15-2 15 16 3 16H12Z" fill="#c6cdd1" stroke="#a1aeb6" stroke-width="1.3"/>';
  const umbrella='<path d="M24 23v17c0 7-10 7-10 0" fill="none" stroke="#76ad2b" stroke-width="3"/><path d="M3 25C5 5 42 5 45 25c-6-5-10-5-14 0-5-5-10-5-14 0-5-5-9-5-14 0Z" fill="#8fc83d"/><path d="M24 7v4" stroke="#76ad2b" stroke-width="2"/><path d="m8 5-2 5m33-6-2 5" stroke="#4badd4" stroke-width="2.5"/>';
+ const foldedUmbrella='<g data-symbol="folded-umbrella"><path d="M20 5v32c0 9 12 9 12 1" fill="none" stroke="#76ad2b" stroke-width="3" stroke-linecap="round"/><path d="M20 7C17 15 13 25 12 32Q20 29 28 32C27 24 23 15 20 7Z" fill="#8fc83d" stroke="#669b25" stroke-width="1.5"/><path d="M20 10v20m-6-4h12" fill="none" stroke="#669b25" stroke-width="1.4"/></g>';
  const snowman='<g data-symbol="snowman"><ellipse cx="24" cy="33" rx="15" ry="13" fill="#f5fbff" stroke="#7198ad" stroke-width="1.8"/><circle cx="24" cy="13" r="10" fill="#f5fbff" stroke="#7198ad" stroke-width="1.8"/><path d="M16 21h16v4H16zM29 24h4v9h-4z" fill="#ed7d45"/><circle cx="20.5" cy="12" r="1.3" fill="#344e60"/><circle cx="27.5" cy="12" r="1.3" fill="#344e60"/><path d="m24 14 8 2-8 2Z" fill="#ed963a"/></g>';
- const wet=/비|소나기/.test(label),snowy=/눈/.test(label),occasional=/한때|가끔/.test(label);
+ const wet=/비|소나기/.test(label),snowy=/눈/.test(label),occasional=/한때|가끔|일부 시간/.test(label);
  // A sun with rain denotes an explicit intermittent forecast, never an inferred clearing.
  const intermittent=wet&&occasional&&!night?`<g data-symbol="intermittent-sun" transform="translate(22 0) scale(.52)">${sun}</g>`:'';
+ const rainShape=occasional?foldedUmbrella:umbrella;
  let shape;
- if(wet&&snowy)shape=`${intermittent}<g data-symbol="rain">${umbrella}</g><g transform="translate(14 10) scale(.78)">${snowman}</g>`;
- else if(wet)shape=`${intermittent}<g data-symbol="rain">${umbrella}</g>`;
+ if(wet&&snowy)shape=`${intermittent}<g data-symbol="rain">${rainShape}</g><g transform="translate(14 10) scale(.78)">${snowman}</g>`;
+ else if(wet)shape=`${intermittent}<g data-symbol="rain">${rainShape}</g>`;
  else if(snowy)shape=snowman;
  else shape=/맑/.test(label)?skyLight:/구름/.test(label)?`<g transform="translate(-1 -3) scale(.8)">${skyLight}</g>${cloud}`:cloud;
  const accessible=night&&/맑|구름/.test(label)?`${label} (밤)`:label;
@@ -28,6 +30,20 @@ export function rainDisplay(raw){
 }
 export function rainMarkup(raw){const text=rainDisplay(raw);return text.split(' ').map(part=>`<span class="rain-piece">${esc(part)}</span>`).join('<wbr>');}
 
+// Infer intermittency only from at least six consecutive, known hourly PTY values.
+export function halfDayWeather(rows){
+ const representative=rows.find(r=>[1,2,3,4].includes(r.pty))||rows.reduce((a,b)=>(b.sky||0)>(a?.sky||0)?b:a,null);
+ if(!representative)return null;
+ const label=weatherLabel(representative);
+ const hours=[...new Map(rows.map(r=>[r.time,r])).values()].sort((a,b)=>a.time.localeCompare(b.time));
+ const known=hours.length>=6&&hours.every((r,i)=>[0,1,2,3,4].includes(r.pty)&&(!i||Number(r.time.slice(0,2))-Number(hours[i-1].time.slice(0,2))===1));
+ const wet=hours.filter(r=>r.pty>0);
+ if(known&&wet.length>0&&wet.length<=hours.length/2){
+  const rain=wet.some(r=>[1,2,4].includes(r.pty)),snow=wet.some(r=>[2,3].includes(r.pty));
+  return '일부 시간 '+(rain&&snow?'비 또는 눈':snow?'눈':wet.every(r=>r.pty===4)?'소나기':'비');
+ }
+ return label;
+}
 export function buildDays(data,now=new Date()){
  const short=data.rows||[],mid=data.mid?.days||[];
  return Array.from({length:11},(_,i)=>{
@@ -36,9 +52,9 @@ export function buildDays(data,now=new Date()){
   const pick=k=>group.find(r=>valid(r[k]))?.[k]??null;
   const parts=[0,1].map(half=>{
    const g=hourly.filter(r=>(Number(r.time.slice(0,2))<12?0:1)===half),fallback=m?.parts?.[m.allDay?0:half];
-   const representative=g.find(r=>[1,2,3,4].includes(r.pty))||g.reduce((a,b)=>(b.sky||0)>(a?.sky||0)?b:a,null);
+   const summary=halfDayWeather(g);
    const pops=g.map(r=>r.pop).filter(valid);
-   return {weather:representative?weatherLabel(representative):fallback?.weather??null,pop:pops.length?Math.max(...pops):fallback?.pop??null,available:!!g.length||!!fallback};
+   return {weather:summary??fallback?.weather??null,pop:pops.length?Math.max(...pops):fallback?.pop??null,available:!!g.length||!!fallback};
   });
   return {date,allDay:!hourly.length&&(m?.allDay??i>=8),parts,min:pick('tmin')??(data.dailyMinimumSupplement?.date===date?data.dailyMinimumSupplement.value:null)??m?.min??null,max:pick('tmax')??(data.dailyMaximumSupplement?.date===date?data.dailyMaximumSupplement.value:null)??m?.max??null,hasHours:!!hourly.length};
  });
