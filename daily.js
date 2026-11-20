@@ -1,4 +1,4 @@
-import {weatherLabel,dayOffset,kstDate} from './core.js?v=0.7.14';
+import {weatherLabel,dayOffset,kstDate} from './core.js?v=0.7.15';
 export const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const valid=v=>typeof v==='number'&&Number.isFinite(v);
 export const unit=(v,u)=>valid(v)?`${v}${u}`:'—';
@@ -32,7 +32,12 @@ export function rainMarkup(raw){const text=rainDisplay(raw);return text.split(' 
 
 // Infer intermittency only from at least six consecutive, known hourly PTY values.
 export function halfDayWeather(rows){
- const representative=rows.find(r=>[1,2,3,4].includes(r.pty))||rows.reduce((a,b)=>(b.sky||0)>(a?.sky||0)?b:a,null);
+ // Count each forecast hour once. A tie favors the cloudier valid SKY category.
+ const uniqueHours=[...new Map(rows.map(r=>[r.time,r])).values()];
+ const counts=new Map();
+ for(const r of uniqueHours)if([1,3,4].includes(r.sky))counts.set(r.sky,(counts.get(r.sky)||0)+1);
+ const dominantSky=[...counts.keys()].sort((a,b)=>counts.get(b)-counts.get(a)||b-a)[0];
+ const representative=rows.find(r=>[1,2,3,4].includes(r.pty))||uniqueHours.find(r=>r.sky===dominantSky&&dominantSky!==undefined);
  if(!representative)return null;
  const label=weatherLabel(representative);
  const hours=[...new Map(rows.map(r=>[r.time,r])).values()].sort((a,b)=>a.time.localeCompare(b.time));
